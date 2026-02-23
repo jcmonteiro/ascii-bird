@@ -138,8 +138,7 @@ type Game struct {
 	bestScore     int
 	state         GameState
 	frameCount    int
-	scrollOffset  int
-	scrollAccum   float64     // sub-pixel pipe scroll accumulator
+	scrollOffset  float64     // smooth sub-pixel scroll offset (accumulated pipeSpeed)
 	buf           [][]rune    // character buffer
 	colBuf        [][]string  // color buffer (per cell)
 }
@@ -191,7 +190,6 @@ func (g *Game) startGame() {
 	g.score = 0
 	g.frameCount = 0
 	g.scrollOffset = 0
-	g.scrollAccum = 0
 	g.pipes = nil
 	g.resetBird()
 	g.bird.vy = flapStrength // start with an initial jump
@@ -225,6 +223,11 @@ func (g *Game) makePipe(x int) Pipe {
 	return Pipe{x: x, gapTop: gapTop}
 }
 
+// pipeScreenX returns the screen column for a pipe, applying the smooth scroll offset.
+func (g *Game) pipeScreenX(p Pipe) int {
+	return p.x - int(math.Round(g.scrollOffset))
+}
+
 // ──────────────────────────
 // Input
 // ──────────────────────────
@@ -248,6 +251,7 @@ func readInput(ch chan InputEvent, quit chan struct{}) {
 		}
 		n, _ := os.Stdin.Read(buf[:1])
 		if n == 0 {
+			time.Sleep(1 * time.Millisecond) // yield CPU; prevents busy-wait with VMIN=0
 			continue
 		}
 
@@ -301,25 +305,20 @@ func (g *Game) update(flap bool) {
 	g.bird.y += g.bird.vy
 	g.bird.frame = g.frameCount
 
-	// Scroll pipes left (sub-pixel accumulator for smooth speed at higher FPS)
-	g.scrollAccum += pipeSpeed
-	for g.scrollAccum >= 1.0 {
-		g.scrollAccum -= 1.0
-		for i := range g.pipes {
-			g.pipes[i].x--
-		}
-	}
+	// Scroll: advance the smooth offset (pipes stay at base positions)
+	g.scrollOffset += pipeSpeed
 
 	// Score: bird passed a pipe
 	for i := range g.pipes {
-		if !g.pipes[i].scored && g.pipes[i].x+pipeWidth < g.bird.x {
+		sx := g.pipeScreenX(g.pipes[i])
+		if !g.pipes[i].scored && sx+pipeWidth < g.bird.x {
 			g.pipes[i].scored = true
 			g.score++
 		}
 	}
 
 	// Remove off-screen pipes, spawn new ones
-	if len(g.pipes) > 0 && g.pipes[0].x < -(pipeWidth + 2) {
+	if len(g.pipes) > 0 && g.pipeScreenX(g.pipes[0]) < -(pipeWidth + 2) {
 		g.pipes = g.pipes[1:]
 		// spawn a new one beyond the right edge
 		lastX := g.pipes[len(g.pipes)-1].x
@@ -350,8 +349,9 @@ func (g *Game) checkCollision() bool {
 	birdBottom := birdRow + 1
 
 	for _, p := range g.pipes {
-		pipeLeft := p.x
-		pipeRight := p.x + pipeWidth - 1
+		sx := g.pipeScreenX(p)
+		pipeLeft := sx
+		pipeRight := sx + pipeWidth - 1
 
 		// Check horizontal overlap
 		if birdRight >= pipeLeft && birdLeft <= pipeRight {
@@ -408,9 +408,10 @@ func (g *Game) renderPipes() {
 	playH := g.playArea()
 
 	for _, p := range g.pipes {
+		sx := g.pipeScreenX(p)
 		gapBottom := p.gapTop + pipeGap
 
-		for col := p.x; col < p.x+pipeWidth; col++ {
+		for col := sx; col < sx+pipeWidth; col++ {
 			if col < 0 || col >= g.width {
 				continue
 			}
@@ -420,7 +421,7 @@ func (g *Game) renderPipes() {
 				if row < 0 || row >= playH {
 					continue
 				}
-				isEdge := col == p.x || col == p.x+pipeWidth-1
+				isEdge := col == sx || col == sx+pipeWidth-1
 				if isEdge {
 					g.buf[row][col] = '║'
 				} else {
@@ -437,13 +438,13 @@ func (g *Game) renderPipes() {
 				g.colBuf[capRow][col] = colPipeCap
 			}
 			// Extra cap width
-			if col == p.x && p.x-1 >= 0 && p.gapTop-1 >= 0 && p.gapTop-1 < playH {
-				g.buf[p.gapTop-1][p.x-1] = '▄'
-				g.colBuf[p.gapTop-1][p.x-1] = colPipeCap
+			if col == sx && sx-1 >= 0 && p.gapTop-1 >= 0 && p.gapTop-1 < playH {
+				g.buf[p.gapTop-1][sx-1] = '▄'
+				g.colBuf[p.gapTop-1][sx-1] = colPipeCap
 			}
-			if col == p.x+pipeWidth-1 && p.x+pipeWidth < g.width && p.gapTop-1 >= 0 && p.gapTop-1 < playH {
-				g.buf[p.gapTop-1][p.x+pipeWidth] = '▄'
-				g.colBuf[p.gapTop-1][p.x+pipeWidth] = colPipeCap
+			if col == sx+pipeWidth-1 && sx+pipeWidth < g.width && p.gapTop-1 >= 0 && p.gapTop-1 < playH {
+				g.buf[p.gapTop-1][sx+pipeWidth] = '▄'
+				g.colBuf[p.gapTop-1][sx+pipeWidth] = colPipeCap
 			}
 
 			// Bottom pipe cap (the row at gapBottom)
@@ -452,13 +453,13 @@ func (g *Game) renderPipes() {
 				g.buf[capRowB][col] = '▀'
 				g.colBuf[capRowB][col] = colPipeCap
 			}
-			if col == p.x && p.x-1 >= 0 && gapBottom >= 0 && gapBottom < playH {
-				g.buf[gapBottom][p.x-1] = '▀'
-				g.colBuf[gapBottom][p.x-1] = colPipeCap
+			if col == sx && sx-1 >= 0 && gapBottom >= 0 && gapBottom < playH {
+				g.buf[gapBottom][sx-1] = '▀'
+				g.colBuf[gapBottom][sx-1] = colPipeCap
 			}
-			if col == p.x+pipeWidth-1 && p.x+pipeWidth < g.width && gapBottom >= 0 && gapBottom < playH {
-				g.buf[gapBottom][p.x+pipeWidth] = '▀'
-				g.colBuf[gapBottom][p.x+pipeWidth] = colPipeCap
+			if col == sx+pipeWidth-1 && sx+pipeWidth < g.width && gapBottom >= 0 && gapBottom < playH {
+				g.buf[gapBottom][sx+pipeWidth] = '▀'
+				g.colBuf[gapBottom][sx+pipeWidth] = colPipeCap
 			}
 
 			// Bottom pipe body
@@ -466,7 +467,7 @@ func (g *Game) renderPipes() {
 				if row < 0 || row >= playH {
 					continue
 				}
-				isEdge := col == p.x || col == p.x+pipeWidth-1
+				isEdge := col == sx || col == sx+pipeWidth-1
 				if isEdge {
 					g.buf[row][col] = '║'
 				} else {
