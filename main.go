@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
 	"math"
 	"math/rand"
@@ -139,6 +140,8 @@ type Game struct {
 	state         GameState
 	frameCount    int
 	scrollOffset  float64     // smooth sub-pixel scroll offset (accumulated pipeSpeed)
+	renderAlpha   float64     // interpolation fraction for render between physics steps
+	renderBuf     bytes.Buffer // reusable render output buffer (retains allocation across frames)
 	buf           [][]rune    // character buffer
 	colBuf        [][]string  // color buffer (per cell)
 }
@@ -223,9 +226,11 @@ func (g *Game) makePipe(x int) Pipe {
 	return Pipe{x: x, gapTop: gapTop}
 }
 
-// pipeScreenX returns the screen column for a pipe, applying the smooth scroll offset.
+// pipeScreenX returns the screen column for a pipe, applying the smooth scroll
+// offset plus render interpolation for jitter-free sub-pixel positioning.
 func (g *Game) pipeScreenX(p Pipe) int {
-	return p.x - int(math.Round(g.scrollOffset))
+	smoothOffset := g.scrollOffset + pipeSpeed*g.renderAlpha
+	return p.x - int(math.Round(smoothOffset))
 }
 
 // ──────────────────────────
@@ -808,23 +813,22 @@ func (g *Game) drawCenteredInBox(row, boxStart, boxW int, text string, col strin
 }
 
 func (g *Game) render() string {
-	var sb strings.Builder
-	sb.Grow(g.width * g.height * 20) // pre-allocate
+	g.renderBuf.Reset()
 
 	for r := 0; r < g.height; r++ {
-		moveCursorStr(&sb, r+1, 1)
+		fmt.Fprintf(&g.renderBuf, "\033[%d;%dH", r+1, 1)
 		prevCol := ""
 		for c := 0; c < g.width; c++ {
 			col := g.colBuf[r][c]
 			if col != prevCol {
-				sb.WriteString(col)
+				g.renderBuf.WriteString(col)
 				prevCol = col
 			}
-			sb.WriteRune(g.buf[r][c])
+			g.renderBuf.WriteRune(g.buf[r][c])
 		}
-		sb.WriteString(reset)
+		g.renderBuf.WriteString(reset)
 	}
-	return sb.String()
+	return g.renderBuf.String()
 }
 
 // bufText extracts plain text from the character buffer (no ANSI codes).
@@ -852,10 +856,6 @@ func (g *Game) bufRow(row int) string {
 		sb.WriteRune(g.buf[row][c])
 	}
 	return sb.String()
-}
-
-func moveCursorStr(sb *strings.Builder, r, c int) {
-	fmt.Fprintf(sb, "\033[%d;%dH", r, c)
 }
 
 // ──────────────────────────
@@ -1022,9 +1022,12 @@ func main() {
 				// Run zero or more physics steps per render frame
 				for physicsAccum >= physicsRate {
 					physicsAccum -= physicsRate
+					g.renderAlpha = 0 // physics uses exact offset
 					g.update(pendingFlap)
 					pendingFlap = false // consumed on first physics tick
 				}
+				// Interpolate for smooth rendering between physics ticks
+				g.renderAlpha = float64(physicsAccum) / float64(physicsRate)
 				g.clearBuf()
 				g.renderGround()
 				g.renderClouds()
@@ -1043,6 +1046,7 @@ func main() {
 					g.startGame()
 					initClouds(g.width, g.height)
 				}
+				g.renderAlpha = 0 // no interpolation when dead
 				g.clearBuf()
 				g.renderGround()
 				g.renderClouds()
