@@ -17,7 +17,7 @@ A Flappy Bird clone that runs in your terminal. No pixels. No frameworks. Just A
 ## Features Nobody Asked For
 
 - **Bird physics** — Gravity pulls you down. Flapping pushes you up. Revolutionary.
-- **Procedurally generated pipes** — Random gaps so I can blame RNG instead of my reflexes :man_tipping_hand:
+- **Procedurally generated pipes** — Random gaps so I can blame RNG instead of my reflexes
 - **Differential rendering** — Double-buffered, diffed cell-by-cell. Cuts output from ~48KB to ~1KB per frame. Your PTY thanks me.
 - **Title screen with animated bird** — It bobs. Its wings flap.
 - **Scrolling clouds** — Atmospheric. Decorative. Completely pointless.
@@ -36,7 +36,7 @@ go build -o ascii-bird .
 ./ascii-bird
 ```
 
-That's it. No flags. No config files. `go build` is faster than opening Unity and pretending I'll finish my RPG :sweat_smile:
+That's it. No flags. No config files. `go build` is faster than opening Unity and pretending I'll finish my RPG
 
 **Requirements:** Go 1.21+, macOS/Linux (I use `golang.org/x/sys/unix` — Windows users, WSL is your friend), and a terminal emulator that isn't from 1987.
 
