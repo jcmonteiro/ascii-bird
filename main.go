@@ -97,11 +97,12 @@ const (
 	flapStrength = -1.35
 	maxFallSpeed = 2.8  // terminal velocity — prevents punishing freefall
 	pipeWidth    = 6
-	pipeGap      = 8    // vertical gap between top and bottom pipe
+	pipeGap      = 11   // vertical gap between top and bottom pipe
 	pipeSpacing  = 25   // horizontal distance between pipes
-	pipeSpeed    = 0.67 // pixels per frame (keeps ~20 px/sec at 30 FPS)
+	pipeSpeed    = 0.67 // pixels per physics tick (keeps ~20 px/sec at 30 ticks/sec)
 	groundHeight = 3
-	tickRate     = 33 * time.Millisecond // 30 FPS
+	physicsRate  = 33 * time.Millisecond // 30 Hz — fixed simulation step
+	renderRate   = 16 * time.Millisecond // ~60 FPS — visual refresh rate
 )
 
 // ──────────────────────────
@@ -193,6 +194,7 @@ func (g *Game) startGame() {
 	g.scrollAccum = 0
 	g.pipes = nil
 	g.resetBird()
+	g.bird.vy = flapStrength // start with an initial jump
 	g.state = StatePlaying
 	g.spawnInitialPipes()
 }
@@ -941,34 +943,44 @@ func main() {
 
 	go readInput(inputCh, quitCh)
 
-	ticker := time.NewTicker(tickRate)
-	defer ticker.Stop()
+	// Render ticker drives the main loop at ~60 FPS.
+	// Physics runs in fixed steps accumulated per render frame,
+	// so game behavior is independent of render rate.
+	renderTicker := time.NewTicker(renderRate)
+	defer renderTicker.Stop()
 
 	cloudTicker := time.NewTicker(150 * time.Millisecond)
 	defer cloudTicker.Stop()
 
+	lastPhysics := time.Now()
+	physicsAccum := time.Duration(0)
+
+	// Input state persists across render frames so inputs aren't
+	// dropped when no physics step runs in a given render frame.
+	pendingFlap := false
+	pendingQuit := false
+
 	for {
 		select {
-		case <-ticker.C:
-			// Drain input
-			flap := false
-			quit := false
+		case now := <-renderTicker.C:
+			// Drain input — accumulate into persistent flags
 		drainLoop:
 			for {
 				select {
 				case ev := <-inputCh:
 					switch ev {
 					case InputFlap:
-						flap = true
+						pendingFlap = true
 					case InputQuit:
-						quit = true
+						pendingQuit = true
 					}
 				default:
 					break drainLoop
 				}
 			}
 
-			if quit {
+			if pendingQuit {
+				pendingQuit = false
 				if g.state == StatePlaying {
 					g.die()
 				} else {
@@ -982,19 +994,32 @@ func main() {
 				}
 			}
 
+			// Accumulate elapsed time and run physics in fixed steps
+			physicsAccum += now.Sub(lastPhysics)
+			lastPhysics = now
+
 			switch g.state {
 			case StateTitle:
-				g.frameCount++
-				if flap {
+				for physicsAccum >= physicsRate {
+					physicsAccum -= physicsRate
+					g.frameCount++
+					scrollClouds(g.width)
+				}
+				if pendingFlap {
+					pendingFlap = false
 					g.startGame()
 				}
 				g.renderTitleScreen()
-				scrollClouds(g.width)
 				output := g.render()
 				fmt.Print(output)
 
 			case StatePlaying:
-				g.update(flap)
+				// Run zero or more physics steps per render frame
+				for physicsAccum >= physicsRate {
+					physicsAccum -= physicsRate
+					g.update(pendingFlap)
+					pendingFlap = false // consumed on first physics tick
+				}
 				g.clearBuf()
 				g.renderGround()
 				g.renderClouds()
@@ -1008,11 +1033,11 @@ func main() {
 				fmt.Print(output)
 
 			case StateDead:
-				if flap {
+				if pendingFlap {
+					pendingFlap = false
 					g.startGame()
 					initClouds(g.width, g.height)
 				}
-				// Still render the frozen frame with overlay
 				g.clearBuf()
 				g.renderGround()
 				g.renderClouds()
