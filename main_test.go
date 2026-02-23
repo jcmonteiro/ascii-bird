@@ -1779,3 +1779,261 @@ func TestBufRow_InvalidRow(t *testing.T) {
 		t.Error("bufRow(height) should return empty string")
 	}
 }
+
+// ═══════════════════════════════════════════
+// 20. DIFFERENTIAL RENDERING
+// ═══════════════════════════════════════════
+
+func TestDiffRender_FirstFrameIsFullRedraw(t *testing.T) {
+	g := testGame()
+	if !g.fullRedraw {
+		t.Fatal("new game should have fullRedraw=true")
+	}
+
+	g.clearBuf()
+	g.renderGround()
+	output := g.render()
+
+	// First render with fullRedraw should emit every cell (width * height cursor moves)
+	// Each cell gets its own \033[r;cH cursor positioning
+	cellCount := 0
+	for i := 0; i < len(output)-1; i++ {
+		if output[i] == '\033' && i+1 < len(output) && output[i+1] == '[' {
+			cellCount++
+		}
+	}
+	// Each cell emits: cursor_move + color + char + reset
+	// cursor_move and reset both start with \033[, so we get at least 2 * w * h escape seqs.
+	// But we just verify there's a substantial amount of output.
+	minExpected := g.width * g.height // at least one escape per cell
+	if cellCount < minExpected {
+		t.Errorf("first render should emit many escape sequences (got %d, expected >= %d)", cellCount, minExpected)
+	}
+
+	// After first render, fullRedraw should be false
+	if g.fullRedraw {
+		t.Error("fullRedraw should be false after first render")
+	}
+}
+
+func TestDiffRender_IdenticalFrameProducesNoOutput(t *testing.T) {
+	g := testGame()
+
+	// First render (full)
+	g.clearBuf()
+	g.renderGround()
+	_ = g.render()
+
+	// Second render with identical buffer
+	g.clearBuf()
+	g.renderGround()
+	output2 := g.render()
+
+	// Output should be empty or very small — no cells changed
+	if len(output2) > 0 {
+		t.Errorf("identical frame should produce empty output, got %d bytes", len(output2))
+	}
+}
+
+func TestDiffRender_SingleCellChangeMinimalOutput(t *testing.T) {
+	g := testGame()
+
+	// First render (full)
+	g.clearBuf()
+	_ = g.render()
+
+	// Change exactly one cell
+	g.buf[5][10] = 'X'
+	g.colBuf[5][10] = colPipe
+
+	output := g.render()
+
+	// Output should contain cursor positioning to row 6, col 11 (1-indexed)
+	expected := fmt.Sprintf("\033[%d;%dH", 6, 11)
+	if !strings.Contains(output, expected) {
+		t.Errorf("diff output should contain cursor move to changed cell, expected %q", expected)
+	}
+
+	// Output should be much smaller than a full redraw
+	// Full redraw for 80x24 = ~1920 cells * ~30 bytes each ≈ 50KB+
+	// Single cell change should be < 100 bytes
+	if len(output) > 200 {
+		t.Errorf("single cell change should produce tiny output, got %d bytes", len(output))
+	}
+}
+
+func TestDiffRender_OutputShrinksDramaticallyAfterFirstFrame(t *testing.T) {
+	g := testGame()
+
+	// First render (full redraw)
+	g.clearBuf()
+	g.renderGround()
+	g.renderScore()
+	fullOutput := g.render()
+	fullSize := len(fullOutput)
+
+	// Second render: only the score text and maybe a few cells change (frameCount)
+	// But since we use the exact same buffer contents, nothing should change
+	g.clearBuf()
+	g.renderGround()
+	g.renderScore()
+	diffOutput := g.render()
+	diffSize := len(diffOutput)
+
+	// Diff output should be drastically smaller (ideally zero for identical frame)
+	if diffSize > fullSize/10 {
+		t.Errorf("diff render should be <<< full render: full=%d bytes, diff=%d bytes (ratio: %.1fx)",
+			fullSize, diffSize, float64(diffSize)/float64(fullSize))
+	}
+	t.Logf("  render size: full=%d bytes, diff=%d bytes (%.1f%% reduction)",
+		fullSize, diffSize, 100.0*(1.0-float64(diffSize)/float64(fullSize)))
+}
+
+func TestDiffRender_PrevBufUpdated(t *testing.T) {
+	g := testGame()
+
+	g.clearBuf()
+	g.buf[3][7] = 'Z'
+	g.colBuf[3][7] = colPipe
+	_ = g.render()
+
+	// prevBuf should now mirror buf
+	if g.prevBuf[3][7] != 'Z' {
+		t.Errorf("prevBuf should be 'Z' after render, got '%c'", g.prevBuf[3][7])
+	}
+	if g.prevColBuf[3][7] != colPipe {
+		t.Errorf("prevColBuf should be pipe color after render")
+	}
+}
+
+func TestDiffRender_StateTransitionForcesFullRedraw(t *testing.T) {
+	g := testGame()
+
+	// First render
+	g.clearBuf()
+	_ = g.render()
+
+	// Start game (should set fullRedraw=true)
+	g.startGame()
+	if !g.fullRedraw {
+		t.Error("startGame should set fullRedraw=true")
+	}
+
+	// Render the playing state — should be full
+	g.clearBuf()
+	g.renderGround()
+	g.renderPipes()
+	g.renderBird()
+	g.renderScore()
+	playOutput := g.render()
+
+	if len(playOutput) < 1000 {
+		t.Errorf("state transition render should be substantial (got %d bytes)", len(playOutput))
+	}
+}
+
+func TestDiffRender_DeathForcesFullRedraw(t *testing.T) {
+	g := testGame()
+	g.startGame()
+
+	// Render a frame
+	g.clearBuf()
+	g.renderGround()
+	g.renderPipes()
+	g.renderBird()
+	g.renderScore()
+	_ = g.render()
+
+	// Die
+	g.die()
+	if !g.fullRedraw {
+		t.Error("die() should set fullRedraw=true")
+	}
+}
+
+func TestDiffRender_OnlyChangedCellsEmitted(t *testing.T) {
+	g := testGame()
+
+	// First render: fill with spaces
+	g.clearBuf()
+	_ = g.render()
+
+	// Change a small region (simulating pipe movement by 1 column)
+	changedCells := 0
+	for r := 0; r < 10; r++ {
+		g.buf[r][20] = '║'
+		g.colBuf[r][20] = colPipe
+		g.buf[r][21] = '█'
+		g.colBuf[r][21] = colPipe
+		changedCells += 2
+	}
+	// Also "erase" where the pipe used to be (if it moved right)
+	for r := 0; r < 10; r++ {
+		g.buf[r][19] = ' '
+		g.colBuf[r][19] = colSky
+		// col 19 was already ' '/colSky from clearBuf, so these shouldn't count
+	}
+
+	output := g.render()
+
+	// Count cursor positioning sequences in output
+	cursorMoves := strings.Count(output, "\033[")
+	// Each changed cell produces: cursor_move (\033[) + color + reset (\033[)
+	// So roughly 2 escapes per changed cell, plus the color code itself may have \033[
+	// At minimum there should be changedCells cursor positionings
+	// But col 19 was already space/sky, so those shouldn't be re-emitted
+	if cursorMoves > changedCells*5 {
+		t.Errorf("diff should only emit changed cells: got %d escape sequences for %d changed cells",
+			cursorMoves, changedCells)
+	}
+	t.Logf("  diff render: %d changed cells → %d escape sequences, %d bytes",
+		changedCells, cursorMoves, len(output))
+}
+
+func TestDiffRender_PrevBufAllocated(t *testing.T) {
+	g := testGame()
+
+	if len(g.prevBuf) != g.height {
+		t.Fatalf("prevBuf rows: expected %d, got %d", g.height, len(g.prevBuf))
+	}
+	for r := 0; r < g.height; r++ {
+		if len(g.prevBuf[r]) != g.width {
+			t.Fatalf("prevBuf row %d cols: expected %d, got %d", r, g.width, len(g.prevBuf[r]))
+		}
+		if len(g.prevColBuf[r]) != g.width {
+			t.Fatalf("prevColBuf row %d cols: expected %d, got %d", r, g.width, len(g.prevColBuf[r]))
+		}
+	}
+}
+
+func TestDiffRender_MovingPipeOutputScalesWithDelta(t *testing.T) {
+	g := testGame()
+	g.startGame()
+	gapTop := 8
+	g.pipes = []Pipe{{x: 40, gapTop: gapTop}}
+
+	// Render frame 1: pipe at position 40
+	g.clearBuf()
+	g.renderGround()
+	g.renderPipes()
+	_ = g.render()
+
+	// Move pipe 1 column left, render frame 2
+	g.pipes[0].x = 39
+	g.clearBuf()
+	g.renderGround()
+	g.renderPipes()
+	diffOutput := g.render()
+	diffSize := len(diffOutput)
+
+	// The diff should be proportional to the pipe's visual footprint change,
+	// not the entire screen. Pipe is 6+2 (caps) wide, ~playArea high, so moving
+	// 1 column changes roughly 2 columns * playArea rows = ~42 cells.
+	// Full screen is 80*24 = 1920 cells. Diff should be << full.
+	fullFrameEstimate := g.width * g.height * 30 // rough bytes per full frame
+	if diffSize > fullFrameEstimate/3 {
+		t.Errorf("pipe move diff should be much smaller than full frame: diff=%d, fullEstimate=%d",
+			diffSize, fullFrameEstimate)
+	}
+	t.Logf("  pipe move: diff=%d bytes (vs ~%d byte full frame)", diffSize, fullFrameEstimate)
+}

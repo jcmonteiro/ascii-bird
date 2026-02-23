@@ -103,7 +103,7 @@ const (
 	pipeSpeed    = 0.67 // pixels per physics tick (keeps ~20 px/sec at 30 ticks/sec)
 	groundHeight = 3
 	physicsRate  = 33 * time.Millisecond // 30 Hz — fixed simulation step
-	renderRate   = 16 * time.Millisecond // ~60 FPS — visual refresh rate
+	renderRate   = 16 * time.Millisecond // ~60 FPS — differential rendering keeps output minimal
 )
 
 // ──────────────────────────
@@ -142,8 +142,11 @@ type Game struct {
 	scrollOffset  float64     // smooth sub-pixel scroll offset (accumulated pipeSpeed)
 	renderAlpha   float64     // interpolation fraction for render between physics steps
 	renderBuf     bytes.Buffer // reusable render output buffer (retains allocation across frames)
-	buf           [][]rune    // character buffer
-	colBuf        [][]string  // color buffer (per cell)
+	buf           [][]rune    // character buffer (back buffer — current frame)
+	colBuf        [][]string  // color buffer (back buffer — current frame)
+	prevBuf       [][]rune    // character buffer (front buffer — previous frame)
+	prevColBuf    [][]string  // color buffer (front buffer — previous frame)
+	fullRedraw    bool        // when true, diff render emits every cell (first frame / resize)
 }
 
 // ──────────────────────────
@@ -175,10 +178,15 @@ func newGameWithSize(w, h int) *Game {
 func (g *Game) allocBuffers() {
 	g.buf = make([][]rune, g.height)
 	g.colBuf = make([][]string, g.height)
+	g.prevBuf = make([][]rune, g.height)
+	g.prevColBuf = make([][]string, g.height)
 	for r := range g.buf {
 		g.buf[r] = make([]rune, g.width)
 		g.colBuf[r] = make([]string, g.width)
+		g.prevBuf[r] = make([]rune, g.width)
+		g.prevColBuf[r] = make([]string, g.width)
 	}
+	g.fullRedraw = true // first frame must draw everything
 }
 
 func (g *Game) resetBird() {
@@ -197,6 +205,7 @@ func (g *Game) startGame() {
 	g.resetBird()
 	g.bird.vy = flapStrength // start with an initial jump
 	g.state = StatePlaying
+	g.fullRedraw = true // force full repaint on state transition
 	g.spawnInitialPipes()
 }
 
@@ -373,6 +382,7 @@ func (g *Game) checkCollision() bool {
 
 func (g *Game) die() {
 	g.state = StateDead
+	g.fullRedraw = true // force full repaint to draw game-over overlay cleanly
 	if g.score > g.bestScore {
 		g.bestScore = g.score
 	}
@@ -816,18 +826,28 @@ func (g *Game) render() string {
 	g.renderBuf.Reset()
 
 	for r := 0; r < g.height; r++ {
-		fmt.Fprintf(&g.renderBuf, "\033[%d;%dH", r+1, 1)
-		prevCol := ""
 		for c := 0; c < g.width; c++ {
+			ch := g.buf[r][c]
 			col := g.colBuf[r][c]
-			if col != prevCol {
-				g.renderBuf.WriteString(col)
-				prevCol = col
+
+			// Skip unchanged cells (differential rendering)
+			if !g.fullRedraw && ch == g.prevBuf[r][c] && col == g.prevColBuf[r][c] {
+				continue
 			}
-			g.renderBuf.WriteRune(g.buf[r][c])
+
+			// Position cursor and emit this cell
+			fmt.Fprintf(&g.renderBuf, "\033[%d;%dH", r+1, c+1)
+			g.renderBuf.WriteString(col)
+			g.renderBuf.WriteRune(ch)
+			g.renderBuf.WriteString(reset)
+
+			// Update front buffer
+			g.prevBuf[r][c] = ch
+			g.prevColBuf[r][c] = col
 		}
-		g.renderBuf.WriteString(reset)
 	}
+
+	g.fullRedraw = false
 	return g.renderBuf.String()
 }
 
@@ -949,6 +969,8 @@ func main() {
 	go readInput(inputCh, quitCh)
 
 	// Render ticker drives the main loop at ~60 FPS.
+	// Differential rendering (dirty-cell diffing) keeps output minimal — only
+	// changed cells are emitted, so high FPS doesn't flood the PTY.
 	// Physics runs in fixed steps accumulated per render frame,
 	// so game behavior is independent of render rate.
 	renderTicker := time.NewTicker(renderRate)
