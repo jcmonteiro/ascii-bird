@@ -12,7 +12,33 @@ import (
 // ═══════════════════════════════════════════
 
 func testGame() *Game {
-	return newGameWithSize(80, 24)
+	g := newGameWithSize(80, 24)
+	return g
+}
+
+// spriteEye returns the eye character for the bird's current sprite.
+func spriteEye(g *Game) rune {
+	return birdSprites[g.bird.sprite].wingUp[0][1].ch
+}
+
+// spriteBody returns the body character for the bird's current sprite.
+func spriteBody(g *Game) rune {
+	return birdSprites[g.bird.sprite].wingUp[1][1].ch
+}
+
+// spriteBeak returns the beak character for the bird's current sprite.
+func spriteBeak(g *Game) rune {
+	return birdSprites[g.bird.sprite].wingUp[1][2].ch
+}
+
+// spriteWingUp returns the wing-up character for the bird's current sprite.
+func spriteWingUp(g *Game) rune {
+	return birdSprites[g.bird.sprite].wingUp[1][0].ch
+}
+
+// spriteWingDn returns the wing-down character for the bird's current sprite.
+func spriteWingDn(g *Game) rune {
+	return birdSprites[g.bird.sprite].wingDn[1][0].ch
 }
 
 // ═══════════════════════════════════════════
@@ -768,12 +794,13 @@ func TestTitleScreen_ContainsBird(t *testing.T) {
 	g.renderTitleScreen()
 	text := g.bufText()
 
-	// The bird uses these chars: ( ◔ > O and wing ~ or =
-	if !strings.ContainsRune(text, '◔') {
-		t.Error("title screen should contain bird eye character ◔")
+	eye := spriteEye(g)
+	body := spriteBody(g)
+	if !strings.ContainsRune(text, eye) {
+		t.Errorf("title screen should contain bird eye character %c (sprite %q)", eye, birdSprites[g.bird.sprite].name)
 	}
-	if !strings.ContainsRune(text, 'O') {
-		t.Error("title screen should contain bird body character O")
+	if !strings.ContainsRune(text, body) {
+		t.Errorf("title screen should contain bird body character %c (sprite %q)", body, birdSprites[g.bird.sprite].name)
 	}
 }
 
@@ -830,6 +857,8 @@ func TestTitleScreen_NoBestScoreWhenZero(t *testing.T) {
 func TestTitleBirdBob_Animates(t *testing.T) {
 	g := testGame()
 
+	eye := spriteEye(g)
+
 	// Capture bird position at frame 0 (bobOffset = -1 because (0/8)%2 == 0)
 	g.frameCount = 0
 	g.renderTitleScreen()
@@ -845,12 +874,12 @@ func TestTitleBirdBob_Animates(t *testing.T) {
 		t.Error("title bird should bob between frames 0 and 8 (different positions)")
 	}
 
-	// Frame 0: bob up. Frame 8: bob down. Let's find the '◔' row
-	row0 := findRuneRow(g, '◔', frame0)
-	row8 := findRuneRow(g, '◔', frame8)
+	// Frame 0: bob up. Frame 8: bob down. Let's find the eye char row
+	row0 := findRuneRow(g, eye, frame0)
+	row8 := findRuneRow(g, eye, frame8)
 
 	if row0 == -1 || row8 == -1 {
-		t.Fatal("could not find bird eye ◔ in title screen frames")
+		t.Fatalf("could not find bird eye %c in title screen frames (sprite %q)", eye, birdSprites[g.bird.sprite].name)
 	}
 	if row0 == row8 {
 		t.Errorf("bird eye should be at different rows: frame0 row=%d, frame8 row=%d", row0, row8)
@@ -875,26 +904,30 @@ func findRuneRow(g *Game, target rune, text string) int {
 func TestTitleBirdWing_Animates(t *testing.T) {
 	g := testGame()
 
-	// bobOffset = -1 at frame 0 → wingCh = '~'
+	wUp := spriteWingUp(g)
+	wDn := spriteWingDn(g)
+
+	// bobOffset = -1 at frame 0 → wingUp frame
 	g.frameCount = 0
 	g.renderTitleScreen()
 	text0 := g.bufText()
 
-	// bobOffset = 0 at frame 8 → wingCh = '='
+	// bobOffset = 0 at frame 8 → wingDn frame
 	g.frameCount = 8
 	g.renderTitleScreen()
 	text8 := g.bufText()
 
-	has0Tilde := strings.ContainsRune(text0, '~')
-	has8Equals := strings.ContainsRune(text8, '=')
+	has0Up := strings.ContainsRune(text0, wUp)
+	has8Dn := strings.ContainsRune(text8, wDn)
 
-	if !has0Tilde {
-		t.Error("frame 0 (bob up) should have wing character '~'")
+	if !has0Up {
+		t.Errorf("frame 0 (bob up) should have wing-up character %c (sprite %q)", wUp, birdSprites[g.bird.sprite].name)
 	}
-	if !has8Equals {
-		t.Error("frame 8 (bob down) should have wing character '='")
+	if !has8Dn {
+		t.Errorf("frame 8 (bob down) should have wing-down character %c (sprite %q)", wDn, birdSprites[g.bird.sprite].name)
 	}
-	t.Logf("  wing animation: frame0 has '~'=%v, frame8 has '='=%v", has0Tilde, has8Equals)
+	t.Logf("  wing animation: frame0 has %c=%v, frame8 has %c=%v (sprite %q)",
+		wUp, has0Up, wDn, has8Dn, birdSprites[g.bird.sprite].name)
 }
 
 // ═══════════════════════════════════════════
@@ -944,14 +977,18 @@ func TestGameplayScreen_BirdRendered(t *testing.T) {
 	g.renderBird()
 	text := g.bufText()
 
-	if !strings.ContainsRune(text, '◔') {
-		t.Error("gameplay should render bird eye ◔")
+	eye := spriteEye(g)
+	body := spriteBody(g)
+	beak := spriteBeak(g)
+
+	if !strings.ContainsRune(text, eye) {
+		t.Errorf("gameplay should render bird eye %c (sprite %q)", eye, birdSprites[g.bird.sprite].name)
 	}
-	if !strings.ContainsRune(text, 'O') {
-		t.Error("gameplay should render bird body O")
+	if !strings.ContainsRune(text, body) {
+		t.Errorf("gameplay should render bird body %c (sprite %q)", body, birdSprites[g.bird.sprite].name)
 	}
-	if !strings.ContainsRune(text, '>') {
-		t.Error("gameplay should render bird beak >")
+	if !strings.ContainsRune(text, beak) {
+		t.Errorf("gameplay should render bird beak %c (sprite %q)", beak, birdSprites[g.bird.sprite].name)
 	}
 }
 
@@ -959,6 +996,9 @@ func TestGameplayScreen_BirdWingFlap(t *testing.T) {
 	g := testGame()
 	g.startGame()
 	g.bird.y = float64(g.playArea() / 2)
+
+	wUp := spriteWingUp(g)
+	wDn := spriteWingDn(g)
 
 	// Frame where wingUp = true: (frame/4)%2 == 0 → frame 0
 	g.bird.frame = 0
@@ -972,16 +1012,17 @@ func TestGameplayScreen_BirdWingFlap(t *testing.T) {
 	g.renderBird()
 	text4 := g.bufText()
 
-	has0Tilde := strings.ContainsRune(text0, '~')
-	has4Equals := strings.ContainsRune(text4, '=')
+	has0Up := strings.ContainsRune(text0, wUp)
+	has4Dn := strings.ContainsRune(text4, wDn)
 
-	if !has0Tilde {
-		t.Error("bird frame 0 should have wing '~'")
+	if !has0Up {
+		t.Errorf("bird frame 0 should have wing-up %c (sprite %q)", wUp, birdSprites[g.bird.sprite].name)
 	}
-	if !has4Equals {
-		t.Error("bird frame 4 should have wing '='")
+	if !has4Dn {
+		t.Errorf("bird frame 4 should have wing-down %c (sprite %q)", wDn, birdSprites[g.bird.sprite].name)
 	}
-	t.Logf("  bird wing flap: frame0='~' present=%v, frame4='=' present=%v", has0Tilde, has4Equals)
+	t.Logf("  bird wing flap: frame0=%c present=%v, frame4=%c present=%v (sprite %q)",
+		wUp, has0Up, wDn, has4Dn, birdSprites[g.bird.sprite].name)
 }
 
 func TestGameplayScreen_PipesRendered(t *testing.T) {

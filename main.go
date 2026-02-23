@@ -107,14 +107,82 @@ const (
 )
 
 // ──────────────────────────
+// Bird sprite system — each bird is a 3×2 grid of (rune, color) cells
+// with two wing animation states (up / down).
+// ──────────────────────────
+
+// SpriteCell is a single character + its ANSI color string.
+type SpriteCell struct {
+	ch  rune
+	col string // foreground color code (combined with colSky bg at render time)
+}
+
+// BirdSprite defines the visual appearance of a bird across two wing frames.
+// Layout: 2 rows × 3 columns. [row][col] — row 0 is top, col 0 is leftmost.
+type BirdSprite struct {
+	name    string
+	wingUp  [2][3]SpriteCell
+	wingDn  [2][3]SpriteCell
+}
+
+// The four bird skins — randomly chosen per game.
+var birdSprites = []BirdSprite{
+	{ // Option A: "Pixel" — block-art retro feel
+		name: "Pixel",
+		wingUp: [2][3]SpriteCell{
+			{{0, ""}, {'●', colBirdEye}, {'▶', colBirdBeak}},
+			{{'╱', colBirdWing}, {'█', colBirdBody}, {'▶', colBirdBeak}},
+		},
+		wingDn: [2][3]SpriteCell{
+			{{0, ""}, {'●', colBirdEye}, {'▶', colBirdBeak}},
+			{{'▄', colBirdWing}, {'█', colBirdBody}, {'▶', colBirdBeak}},
+		},
+	},
+	{ // Option B: "Birb" — round and cute
+		name: "Birb",
+		wingUp: [2][3]SpriteCell{
+			{{0, ""}, {'●', colBirdEye}, {'›', colBirdBeak}},
+			{{'∧', colBirdWing}, {'◉', colBirdBody}, {'›', colBirdBeak}},
+		},
+		wingDn: [2][3]SpriteCell{
+			{{0, ""}, {'●', colBirdEye}, {'›', colBirdBeak}},
+			{{'∨', colBirdWing}, {'◉', colBirdBody}, {'›', colBirdBeak}},
+		},
+	},
+	{ // Option C: "Classic" — refined take on the original
+		name: "Classic",
+		wingUp: [2][3]SpriteCell{
+			{{0, ""}, {'●', colBirdEye}, {'>', colBirdBeak}},
+			{{'⌠', colBirdWing}, {'@', colBirdBody}, {'>', colBirdBeak}},
+		},
+		wingDn: [2][3]SpriteCell{
+			{{0, ""}, {'●', colBirdEye}, {'>', colBirdBeak}},
+			{{'⌡', colBirdWing}, {'@', colBirdBody}, {'>', colBirdBeak}},
+		},
+	},
+	{ // Option D: "Thicc" — chunky half-block eye, bold triangle beak
+		name: "Thicc",
+		wingUp: [2][3]SpriteCell{
+			{{0, ""}, {'◕', colBirdEye}, {'▸', colBirdBeak}},
+			{{'╱', colBirdWing}, {'█', colBirdBody}, {'▸', colBirdBeak}},
+		},
+		wingDn: [2][3]SpriteCell{
+			{{0, ""}, {'◕', colBirdEye}, {'▸', colBirdBeak}},
+			{{'═', colBirdWing}, {'█', colBirdBody}, {'▸', colBirdBeak}},
+		},
+	},
+}
+
+// ──────────────────────────
 // Data types
 // ──────────────────────────
 
 type Bird struct {
-	y    float64
-	vy   float64
-	x    int // fixed column position on screen
-	frame int // animation frame
+	y      float64
+	vy     float64
+	x      int // fixed column position on screen
+	frame  int // animation frame
+	sprite int // index into birdSprites
 }
 
 type Pipe struct {
@@ -191,9 +259,10 @@ func (g *Game) allocBuffers() {
 
 func (g *Game) resetBird() {
 	g.bird = Bird{
-		y:  float64(g.height) / 2.5,
-		vy: 0,
-		x:  g.width / 5,
+		y:      float64(g.height) / 2.5,
+		vy:     0,
+		x:      g.width / 5,
+		sprite: rand.Intn(len(birdSprites)),
 	}
 }
 
@@ -505,42 +574,31 @@ func (g *Game) renderBird() {
 		return
 	}
 
-	// Bird is a 3-wide, 2-tall ASCII art character
-	// Animate wing flapping
+	// Pick wing frame from current sprite
+	sp := &birdSprites[g.bird.sprite]
 	wingUp := (g.bird.frame/4)%2 == 0
-
-	// Row 0 of bird (top)
-	//  ◔)    eye + beak
-	if col-1 >= 0 && col-1 < g.width && row >= 0 && row < playH {
-		g.buf[row][col-1] = '('
-		g.colBuf[row][col-1] = colSky + colBirdBody
-	}
-	if col >= 0 && col < g.width && row >= 0 && row < playH {
-		g.buf[row][col] = '◔'
-		g.colBuf[row][col] = colSky + colBirdEye
-	}
-	if col+1 >= 0 && col+1 < g.width && row >= 0 && row < playH {
-		g.buf[row][col+1] = '>'
-		g.colBuf[row][col+1] = colSky + colBirdBeak
+	frame := &sp.wingUp
+	if !wingUp {
+		frame = &sp.wingDn
 	}
 
-	// Row 1 of bird (bottom) - body + wing
-	if row+1 >= 0 && row+1 < playH {
-		if col-1 >= 0 && col-1 < g.width {
-			if wingUp {
-				g.buf[row+1][col-1] = '~'
-			} else {
-				g.buf[row+1][col-1] = '='
+	// Render 2 rows × 3 columns
+	for dr := 0; dr < 2; dr++ {
+		r := row + dr
+		if r < 0 || r >= playH {
+			continue
+		}
+		for dc := 0; dc < 3; dc++ {
+			c := col - 1 + dc
+			if c < 0 || c >= g.width {
+				continue
 			}
-			g.colBuf[row+1][col-1] = colSky + colBirdWing
-		}
-		if col >= 0 && col < g.width {
-			g.buf[row+1][col] = 'O'
-			g.colBuf[row+1][col] = colSky + colBirdBody
-		}
-		if col+1 >= 0 && col+1 < g.width {
-			g.buf[row+1][col+1] = '>'
-			g.colBuf[row+1][col+1] = colSky + colBirdBeak
+			cell := frame[dr][dc]
+			if cell.ch == 0 {
+				continue // empty cell — leave sky
+			}
+			g.buf[r][c] = cell.ch
+			g.colBuf[r][c] = colSky + cell.col
 		}
 	}
 }
@@ -572,37 +630,30 @@ func (g *Game) renderTitleScreen() {
 
 	col := g.width / 2
 
-	// Bird
-	if titleBirdRow >= 0 && titleBirdRow < g.playArea() {
-		if col-1 >= 0 && col-1 < g.width {
-			g.buf[titleBirdRow][col-1] = '('
-			g.colBuf[titleBirdRow][col-1] = colSky + colBirdBody
-		}
-		if col < g.width {
-			g.buf[titleBirdRow][col] = '◔'
-			g.colBuf[titleBirdRow][col] = colSky + colBirdEye
-		}
-		if col+1 < g.width {
-			g.buf[titleBirdRow][col+1] = '>'
-			g.colBuf[titleBirdRow][col+1] = colSky + colBirdBeak
-		}
+	// Bird — use same sprite as gameplay, wing state tied to bob cycle
+	sp := &birdSprites[g.bird.sprite]
+	frame := &sp.wingUp
+	if bobOffset == 0 {
+		frame = &sp.wingDn
 	}
-	if titleBirdRow+1 >= 0 && titleBirdRow+1 < g.playArea() {
-		wingCh := '~'
-		if bobOffset == 0 {
-			wingCh = '='
+
+	playH := g.playArea()
+	for dr := 0; dr < 2; dr++ {
+		r := titleBirdRow + dr
+		if r < 0 || r >= playH {
+			continue
 		}
-		if col-1 >= 0 && col-1 < g.width {
-			g.buf[titleBirdRow+1][col-1] = wingCh
-			g.colBuf[titleBirdRow+1][col-1] = colSky + colBirdWing
-		}
-		if col < g.width {
-			g.buf[titleBirdRow+1][col] = 'O'
-			g.colBuf[titleBirdRow+1][col] = colSky + colBirdBody
-		}
-		if col+1 < g.width {
-			g.buf[titleBirdRow+1][col+1] = '>'
-			g.colBuf[titleBirdRow+1][col+1] = colSky + colBirdBeak
+		for dc := 0; dc < 3; dc++ {
+			c := col - 1 + dc
+			if c < 0 || c >= g.width {
+				continue
+			}
+			cell := frame[dr][dc]
+			if cell.ch == 0 {
+				continue
+			}
+			g.buf[r][c] = cell.ch
+			g.colBuf[r][c] = colSky + cell.col
 		}
 	}
 
