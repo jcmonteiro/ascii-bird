@@ -477,6 +477,181 @@ func TestPipeGeneration_Recycling(t *testing.T) {
 	}
 }
 
+func TestPipeRecycling_PreservesEvenSpacing(t *testing.T) {
+	g := testGame()
+	g.startGame()
+
+	// Manually push the first pipe well past the removal threshold
+	g.pipes[0].x = -(pipeWidth + 3)
+	lastX := g.pipes[len(g.pipes)-1].x
+
+	// Keep bird alive
+	g.bird.y = float64(g.pipes[1].gapTop + pipeGap/2)
+	g.bird.vy = 0
+
+	g.update(false)
+
+	// The new pipe (now last) should be exactly pipeSpacing from the old last
+	newLast := g.pipes[len(g.pipes)-1]
+	expectedX := lastX + pipeSpacing
+	if newLast.x != expectedX {
+		t.Errorf("recycled pipe x=%d, expected %d (lastX %d + spacing %d)", newLast.x, expectedX, lastX, pipeSpacing)
+	}
+}
+
+func TestPipeRecycling_CapAwareRemovalThreshold(t *testing.T) {
+	g := testGame()
+	g.startGame()
+	initialCount := len(g.pipes)
+
+	// Place first pipe so body is off screen but cap could still be visible:
+	// cap extends to x-1, so at x = -(pipeWidth+1) the left cap is at -(pipeWidth+2),
+	// which is off screen. But threshold is x < -(pipeWidth+2), so at exactly
+	// -(pipeWidth+1) the pipe should NOT be removed yet.
+	g.pipes[0].x = -(pipeWidth + 1)
+
+	// Keep bird alive
+	g.bird.y = float64(g.pipes[1].gapTop + pipeGap/2)
+	g.bird.vy = 0
+
+	g.update(false)
+
+	// Pipe should NOT have been recycled (it's at the threshold boundary)
+	if len(g.pipes) != initialCount {
+		t.Errorf("pipe at x=%d should not be removed yet (threshold is < %d), count changed %d→%d",
+			-(pipeWidth + 1), -(pipeWidth + 2), initialCount, len(g.pipes))
+	}
+
+	// Now push it one more pixel past — it should be recycled
+	g.pipes[0].x = -(pipeWidth + 3)
+	g.update(false)
+
+	// Count should stay the same (removed one, added one), but first pipe changed
+	if len(g.pipes) != initialCount {
+		t.Errorf("after passing threshold, count should stay %d, got %d", initialCount, len(g.pipes))
+	}
+	if g.pipes[0].x == -(pipeWidth + 3) {
+		t.Error("pipe at x=-(pipeWidth+3) should have been removed from the front")
+	}
+}
+
+func TestPipeRecycling_NewPipeNotVisibleOnScreen(t *testing.T) {
+	g := testGame()
+	g.startGame()
+
+	// Force a recycle by pushing first pipe past threshold
+	g.pipes[0].x = -(pipeWidth + 3)
+
+	// Keep bird alive
+	g.bird.y = float64(g.pipes[1].gapTop + pipeGap/2)
+	g.bird.vy = 0
+
+	g.update(false)
+
+	// The newly appended pipe (last in slice) must be beyond the right edge.
+	// Its cap extends 1 char left of x, so x-1 must be > width-1, i.e. x > width.
+	newPipe := g.pipes[len(g.pipes)-1]
+	if newPipe.x <= g.width {
+		t.Errorf("recycled pipe at x=%d is visible on screen (width=%d) — pop-in!", newPipe.x, g.width)
+	}
+}
+
+func TestPipeRecycling_MultiCycleSpacingStability(t *testing.T) {
+	g := testGame()
+	g.startGame()
+
+	// Simulate realistic gameplay: scroll ALL pipes left together, then
+	// when the front pipe crosses the removal threshold, verify the
+	// recycled pipe maintains even spacing. Run many cycles to catch
+	// any drift introduced by recycling logic.
+	for cycle := 0; cycle < 20; cycle++ {
+		// Scroll all pipes left until the first one crosses the removal threshold
+		for g.pipes[0].x >= -(pipeWidth + 2) {
+			for i := range g.pipes {
+				g.pipes[i].x--
+			}
+		}
+
+		// Keep bird alive
+		g.bird.y = float64(g.pipes[1].gapTop + pipeGap/2)
+		g.bird.vy = 0
+
+		g.update(false)
+
+		// Verify all consecutive pipes are evenly spaced
+		for i := 1; i < len(g.pipes); i++ {
+			spacing := g.pipes[i].x - g.pipes[i-1].x
+			if spacing != pipeSpacing {
+				t.Fatalf("cycle %d: pipes[%d]→[%d] spacing=%d, expected %d (x values: %d, %d)",
+					cycle, i-1, i, spacing, pipeSpacing, g.pipes[i-1].x, g.pipes[i].x)
+			}
+		}
+	}
+}
+
+func TestPipeRecycling_ClampWouldBreakSpacing(t *testing.T) {
+	// Regression test: the old code had a clamp `if newX < g.width+2 { newX = g.width+2 }`
+	// that fired when the last pipe was close to the viewport. This broke even spacing.
+	// Set up exactly that scenario: last pipe near the right edge so lastX + pipeSpacing < width + 2.
+	g := testGame()
+	g.startGame()
+
+	// Manually position pipes so the last one is near the right viewport edge.
+	// With pipeSpacing=25, place last pipe at width-20 so lastX+pipeSpacing = width+5,
+	// which is > width+2 and wouldn't trigger the clamp. Instead, place it at width-24
+	// so lastX+pipeSpacing = width+1, which IS less than width+2 and would have triggered it.
+	numPipes := len(g.pipes)
+	for i := 0; i < numPipes; i++ {
+		g.pipes[i].x = -(pipeWidth + 3) + i*pipeSpacing // spread from left
+	}
+	// Override the last pipe to be near the right edge
+	g.pipes[numPipes-1].x = g.width - 24
+
+	// The first pipe is past the removal threshold
+	if g.pipes[0].x >= -(pipeWidth + 2) {
+		// Ensure it's past
+		g.pipes[0].x = -(pipeWidth + 3)
+	}
+
+	lastX := g.pipes[numPipes-1].x
+	expectedNewX := lastX + pipeSpacing
+
+	// Keep bird alive
+	g.bird.y = float64(g.pipes[1].gapTop + pipeGap/2)
+	g.bird.vy = 0
+
+	g.update(false)
+
+	newPipe := g.pipes[len(g.pipes)-1]
+	if newPipe.x != expectedNewX {
+		t.Errorf("recycled pipe x=%d, expected %d — spacing was broken (lastX=%d, width=%d)",
+			newPipe.x, expectedNewX, lastX, g.width)
+	}
+}
+
+func TestPipePoolSize_ScalesWithTerminalWidth(t *testing.T) {
+	tests := []struct {
+		width    int
+		height   int
+		expected int
+	}{
+		{40, 24, (40 / pipeSpacing) + 3},   // narrow terminal
+		{80, 24, (80 / pipeSpacing) + 3},   // standard terminal
+		{120, 24, (120 / pipeSpacing) + 3}, // wide terminal
+		{200, 24, (200 / pipeSpacing) + 3}, // ultra-wide
+	}
+
+	for _, tc := range tests {
+		t.Run(fmt.Sprintf("width_%d", tc.width), func(t *testing.T) {
+			g := newGameWithSize(tc.width, tc.height)
+			g.startGame()
+			if len(g.pipes) != tc.expected {
+				t.Errorf("width=%d: expected %d pipes, got %d", tc.width, tc.expected, len(g.pipes))
+			}
+		})
+	}
+}
+
 // ═══════════════════════════════════════════
 // 7. MEDAL SYSTEM
 // ═══════════════════════════════════════════
