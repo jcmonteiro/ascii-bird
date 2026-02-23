@@ -661,7 +661,7 @@ func (g *Game) renderTitleScreen() {
 	title := "ASCII BIRD"
 	g.drawCentered(g.height/2-6, title, colSky+"\033[1m"+colTitle)
 
-	subtitle := "A Flappy Bird Clone"
+	subtitle := "A Terminal Bird-Dodging Arcade Game"
 	g.drawCentered(g.height/2-4, subtitle, colSky+colSubtitle)
 
 	// Instructions
@@ -819,7 +819,7 @@ func farewellMessage(best int) string {
 		})
 	case best < 80:
 		quip = pick([]string{
-			"Wow. That's... actually kind of beautiful. You've peaked, and it was in a terminal Flappy Bird clone.",
+			"Wow. That's... actually kind of beautiful. You've peaked, and it was in a terminal bird game.",
 			"We didn't think scores like this were possible. We wrote the game and we can't do this.",
 			"At this level, you're not a player. You're a force of nature with a spacebar.",
 			"Magnificent. Terrifying. We're not sure which.",
@@ -828,7 +828,7 @@ func farewellMessage(best int) string {
 		quip = pick([]string{
 			"Absolutely unhinged score. The bird respects you. We're a little scared of you.",
 			"This score is a cry for help wrapped in extraordinary talent.",
-			"You've transcended Flappy Bird. This is performance art now.",
+			"You've transcended the bird game. This is performance art now.",
 			"We'd accuse you of cheating, but the code is right there and we'd know.",
 		})
 	default:

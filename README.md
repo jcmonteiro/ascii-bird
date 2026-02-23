@@ -1,6 +1,6 @@
 # ASCII Bird
 
-> Because you definitely needed *another* Flappy Bird clone. But this one runs in your terminal, so at least you can pretend you're working.
+> Because you definitely needed *another* bird-dodging game. But this one runs in your terminal, so at least you can pretend you're working.
 
 ```
         ___
@@ -16,7 +16,7 @@
 
 ## What Is This
 
-A pixel-perfect\* recreation of Flappy Bird — the game a solo dev made in a weekend that grossed $50k/day while your startup burns VC money on Kubernetes configs. Except this version has no pixels. It's all ASCII characters, ANSI escape codes, and poor life choices rendered at a buttery 60 FPS in your terminal emulator.
+A pixel-perfect\* recreation of that infamous mobile bird game — you know the one. Except this version has no pixels. It's all ASCII characters, ANSI escape codes, and poor life choices rendered at a buttery 60 FPS in your terminal emulator.
 
 \*Pixel-perfect if you squint and have low standards.
 
@@ -95,7 +95,7 @@ For the full technical deep-dive, see [`docs/`](docs/).
 
 ## Tests
 
-Yes, there are tests. 99 of them. For a Flappy Bird clone. In a terminal.
+Yes, there are tests. 99 of them. For a terminal bird game.
 
 ```bash
 go test -v ./...
@@ -146,7 +146,7 @@ For the full tuning rationale, see [`docs/TUNING.md`](docs/TUNING.md).
 
 ## License
 
-Do whatever you want with it. It's a terminal Flappy Bird. If you're reading this section hoping to commercialize it, we need to talk about your business plan.
+Do whatever you want with it. It's a terminal bird game. If you're reading this section hoping to commercialize it, we need to talk about your business plan.
 
 ## FAQ
 
@@ -160,10 +160,14 @@ A: Because `go build` is faster than opening Unity and pretending you'll finish 
 A: It uses `unix.Termios` and `ioctl`. So no. Use WSL, or better yet, use a real OS.
 
 **Q: Can I contribute?**
-A: It's a single-file Flappy Bird clone with 99 tests and three architecture docs. What exactly would you add? Multiplayer? Loot boxes?
+A: It's a bird game with 99 tests and three architecture docs. What exactly would you add? Multiplayer? Loot boxes?
 
 **Q: My terminal looks broken after playing.**
 A: Did you `kill -9` the process? Signal handlers can't save you from yourself. Run `reset` in your terminal.
 
 **Q: I got Platinum!**
 A: Screenshot or it didn't happen.
+
+---
+
+*ASCII Bird is an independent project. Not affiliated with or endorsed by any bird-related mobile game franchise, past or present.*

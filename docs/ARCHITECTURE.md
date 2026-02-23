@@ -1,6 +1,6 @@
 # Architecture
 
-> A terminal Flappy Bird in one file. Here's how the sausage is made.
+> A terminal bird game in one file. Here's how the sausage is made.
 
 ## Overview
 

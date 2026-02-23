@@ -766,8 +766,8 @@ func TestTitleScreen_ContainsSubtitle(t *testing.T) {
 	g.renderTitleScreen()
 	text := g.bufText()
 
-	if !strings.Contains(text, "A Flappy Bird Clone") {
-		t.Error("title screen should contain 'A Flappy Bird Clone'")
+	if !strings.Contains(text, "A Terminal Bird-Dodging Arcade Game") {
+		t.Error("title screen should contain 'A Terminal Bird-Dodging Arcade Game'")
 	}
 }
 
