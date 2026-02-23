@@ -11,7 +11,7 @@
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~██~~██~~~~~~~
 ```
 
-A Flappy Bird clone that runs in your terminal. No pixels. No frameworks. Just ASCII characters, ANSI escape codes, and a few lines of Go that I am mass-overqualifying with tests and architecture documents.
+A terminal arcade game about a bird with poor life choices. No pixels. No frameworks. Just ASCII characters, ANSI escape codes, and a few lines of Go that I am mass-overqualifying with tests and architecture documents.
 
 ## Features Nobody Asked For
 
