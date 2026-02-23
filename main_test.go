@@ -177,8 +177,8 @@ func TestRestart_ResetsBird(t *testing.T) {
 	if g.bird.y != expectedY {
 		t.Errorf("bird y after restart: expected %f, got %f", expectedY, g.bird.y)
 	}
-	if g.bird.vy != 0 {
-		t.Errorf("bird vy after restart: expected 0, got %f", g.bird.vy)
+	if g.bird.vy != flapStrength {
+		t.Errorf("bird vy after restart: expected %f (initial jump), got %f", flapStrength, g.bird.vy)
 	}
 }
 
