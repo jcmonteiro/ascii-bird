@@ -205,7 +205,10 @@ func (g *Game) playArea() int {
 
 func (g *Game) spawnInitialPipes() {
 	startX := g.width + 10
-	for i := 0; i < 4; i++ {
+	// Spawn enough pipes to always have one off-screen on each side.
+	// This prevents visible pop-in on the right and pop-out on the left.
+	numPipes := (g.width / pipeSpacing) + 3
+	for i := 0; i < numPipes; i++ {
 		g.pipes = append(g.pipes, g.makePipe(startX+i*pipeSpacing))
 	}
 }
@@ -316,11 +319,12 @@ func (g *Game) update(flap bool) {
 	}
 
 	// Remove off-screen pipes, spawn new ones
-	if len(g.pipes) > 0 && g.pipes[0].x+pipeWidth < -2 {
+	if len(g.pipes) > 0 && g.pipes[0].x < -(pipeWidth + 2) {
 		g.pipes = g.pipes[1:]
-		// spawn a new one at the right edge
+		// spawn a new one beyond the right edge
 		lastX := g.pipes[len(g.pipes)-1].x
-		g.pipes = append(g.pipes, g.makePipe(lastX+pipeSpacing))
+		newX := lastX + pipeSpacing
+		g.pipes = append(g.pipes, g.makePipe(newX))
 	}
 
 	// Collision detection

@@ -103,8 +103,9 @@ func TestStartGame_TransitionsState(t *testing.T) {
 func TestStartGame_SpawnsPipes(t *testing.T) {
 	g := testGame()
 	g.startGame()
-	if len(g.pipes) != 4 {
-		t.Errorf("expected 4 initial pipes, got %d", len(g.pipes))
+	expected := (g.width / pipeSpacing) + 3
+	if len(g.pipes) != expected {
+		t.Errorf("expected %d initial pipes, got %d", expected, len(g.pipes))
 	}
 	// All pipes should be off-screen to the right
 	for i, p := range g.pipes {
@@ -1377,8 +1378,9 @@ func TestFullGameSimulation_PlayAndDie(t *testing.T) {
 	if g.state != StatePlaying {
 		t.Fatal("should be playing after startGame")
 	}
-	if len(g.pipes) != 4 {
-		t.Fatalf("should have 4 pipes, got %d", len(g.pipes))
+	expectedPipes := (g.width / pipeSpacing) + 3
+	if len(g.pipes) != expectedPipes {
+		t.Fatalf("should have %d pipes, got %d", expectedPipes, len(g.pipes))
 	}
 
 	// Simulate falling to death (no flapping)
