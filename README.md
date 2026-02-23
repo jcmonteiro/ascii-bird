@@ -1,15 +1,14 @@
 # ASCII Bird
 
 ```
-        ___
-    ___/   \___        ██  ██
-   |  ██  ●    >       ██  ██
-   |__~~_/____/        ██  ██
-                       ██  ██
-                     ██████████
-                       ██  ██
-                       ██  ██
-~~~~~~~~~~~~~~~~~~~~~~~██~~██~~~~~~~
+                                                   ██  ██
+                                                   ██  ██
+                                                   ██  ██
+      ●▶         ●▶         ●▶          ●▶         ██  ██
+     ╱█▶  ...   ▄█▶   ...  ╱█▶   ...   ▄█▶       ██████████
+                                                   ██  ██
+                                                   ██  ██
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~██~~██~~~~~~~
 ```
 
 A Flappy Bird clone that runs in your terminal. No pixels. No frameworks. Just ASCII characters, ANSI escape codes, and a few lines of Go that I am mass-overqualifying with tests and architecture documents.
@@ -30,7 +29,7 @@ A Flappy Bird clone that runs in your terminal. No pixels. No frameworks. Just A
 ## Getting Started
 
 ```bash
-git clone https://github.com/ascii-bird/ascii-bird.git
+git clone https://github.com/jcmonteiro/ascii-bird.git
 cd ascii-bird
 go build -o ascii-bird .
 ./ascii-bird
