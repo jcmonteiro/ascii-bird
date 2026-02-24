@@ -2566,7 +2566,7 @@ func TestScrollingGround_GrassHasPattern(t *testing.T) {
 	}
 }
 
-func TestScrollingGround_DirtHasPattern(t *testing.T) {
+func TestScrollingGround_DirtIsSolidFill(t *testing.T) {
 	g := testGame()
 	g.startGame()
 	g.scrollOffset = 0
@@ -2577,10 +2577,10 @@ func TestScrollingGround_DirtHasPattern(t *testing.T) {
 
 	if g.playArea()+1 < g.height {
 		dirtRow := g.bufRow(g.playArea() + 1)
-		has1 := strings.ContainsRune(dirtRow, '░')
-		has2 := strings.ContainsRune(dirtRow, '▒')
-		if !has1 || !has2 {
-			t.Errorf("dirt should have both ░ and ▒ characters for texture, got: ░=%v ▒=%v", has1, has2)
+		for i, ch := range dirtRow {
+			if ch != '░' {
+				t.Errorf("dirt row col %d should be '░', got '%c'", i, ch)
+			}
 		}
 	}
 }

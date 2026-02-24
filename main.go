@@ -75,7 +75,7 @@ const reset = "\033[0m"
 // Nothing is flat-filled.  The palette deliberately avoids the SNES-era flat-pastel look.
 var (
 	colSky       = bg256(117)                  // light blue bg
-	colGround    = bg256(94) + fg256(130)      // brown dirt: dark brown bg, lighter brown fg for texture
+	colGround    = bg256(94) + fg256(94)       // brown dirt: solid fill, no texture
 	colGrass     = bg256(34) + fg256(28)       // green grass: bright green bg, darker green fg for texture
 	colPipe      = bg256(34) + fg256(22)       // green pipe
 	colPipeCap   = bg256(28) + fg256(22)       // darker green cap
@@ -126,7 +126,6 @@ const (
 // game world. The grass row alternates dense/medium block fills for a
 // natural clumpy look; dirt rows use lighter fills for loose earth texture.
 var grassPattern = []rune{'▓', '▓', '▒', '▓', '▓', '▓', '▒', '▒'}
-var dirtPattern = []rune{'░', '░', '▒', '░', '░', '▒', '░', '░', '░', '▒'}
 
 // ──────────────────────────
 // Bird sprite system — each bird is a 3×2 grid of (rune, color) cells
@@ -591,13 +590,10 @@ func (g *Game) renderGround() {
 			g.colBuf[playH][c] = colGrass
 		}
 	}
-	// Dirt rows — scrolling texture pattern (slightly slower for subtle parallax)
-	dl := len(dirtPattern)
-	dirtScroll := int(math.Round((g.scrollOffset + pipeSpeed*g.renderAlpha) * 0.7))
+	// Dirt rows — static solid fill, no scrolling
 	for r := playH + 1; r < g.height; r++ {
 		for c := 0; c < g.width; c++ {
-			idx := ((c + dirtScroll) % dl + dl) % dl
-			g.buf[r][c] = dirtPattern[idx]
+			g.buf[r][c] = '░'
 			g.colBuf[r][c] = colGround
 		}
 	}
