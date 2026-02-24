@@ -71,7 +71,8 @@ func bg256(code int) string { return fmt.Sprintf("\033[48;5;%dm", code) }
 
 const reset = "\033[0m"
 
-// color palette
+// color palette — cohesive colors with directional value shifts (light from upper-left).
+// Nothing is flat-filled.  The palette deliberately avoids the SNES-era flat-pastel look.
 var (
 	colSky       = bg256(117)                  // light blue bg
 	colGround    = bg256(94) + fg256(94)       // brown
@@ -87,6 +88,12 @@ var (
 	colSubtitle  = fg256(15)                   // white
 	colGameOver  = fg256(196)                  // red
 	colMedal     = fg256(220)                  // gold-ish
+
+	// Cloud palette — volumetric shading with directional light from upper-left
+	colCloudBright = fg256(15)  // white — lit top/left edge
+	colCloudMid    = fg256(252) // light grey — body fill
+	colCloudShade  = fg256(249) // medium grey — shadow underside/right
+	colCloudDark   = fg256(245) // darker grey — deep shadow accent
 )
 
 // ──────────────────────────
@@ -619,6 +626,7 @@ func (g *Game) renderScore() {
 func (g *Game) renderTitleScreen() {
 	g.clearBuf()
 	g.renderGround()
+	g.renderClouds()
 
 	// Animated bird on title screen
 	titleBirdRow := g.height/2 - 2
@@ -933,53 +941,169 @@ func (g *Game) bufRow(row int) string {
 // Clouds (background decoration)
 // ──────────────────────────
 
+// Cloud sizes — three distinct geometric variations.
+// Each is a multi-row slice of (rune, colorIndex) pairs.
+// The geometry uses segmented/layered structure with dithered shading,
+// NOT the smooth oval blobs of classic SNES games.
+const (
+	CloudSmall  = 0
+	CloudMedium = 1
+	CloudLarge  = 2
+)
+
 type Cloud struct {
-	row, col int
-	style    int
+	row   int
+	baseX int     // fixed base column (like pipe.x)
+	style int     // CloudSmall, CloudMedium, CloudLarge
+	speed float64 // parallax: scroll speed factor (higher = nearer/faster)
+}
+
+// cloudArt defines the three cloud sizes.
+// Each entry is a slice of rows; each row is a slice of (rune, color) pairs.
+// We use segmented block characters and explicit shading to create
+// volumetric depth — bright top-left, shaded bottom-right.
+type cloudCell struct {
+	ch  rune
+	col string
+}
+
+// cloudSmallArt: compact 2-row puff — asymmetrical, with a lit crown
+// and a shadowed underside.
+var cloudSmallArt = [][]cloudCell{
+	// row 0:  lit top
+	{
+		{' ', ""}, {'▄', colCloudBright}, {'▀', colCloudBright}, {'▄', colCloudMid}, {' ', ""},
+	},
+	// row 1:  shadowed base
+	{
+		{'▀', colCloudMid}, {'█', colCloudMid}, {'▄', colCloudShade}, {'█', colCloudShade}, {'▀', colCloudShade},
+	},
+}
+
+// cloudMediumArt: 3-row cumulus with stacked segments and a dithered shadow.
+var cloudMediumArt = [][]cloudCell{
+	// row 0: bright crown
+	{
+		{' ', ""}, {' ', ""}, {'▄', colCloudBright}, {'█', colCloudBright}, {'▄', colCloudBright}, {' ', ""}, {' ', ""}, {' ', ""},
+	},
+	// row 1: body with directional light
+	{
+		{' ', ""}, {'▄', colCloudBright}, {'█', colCloudMid}, {'█', colCloudMid}, {'█', colCloudMid}, {'▄', colCloudShade}, {' ', ""}, {' ', ""},
+	},
+	// row 2: flat shadowed underside with dither
+	{
+		{'▀', colCloudMid}, {'█', colCloudMid}, {'▄', colCloudShade}, {'░', colCloudShade}, {'▄', colCloudShade}, {'█', colCloudDark}, {'▀', colCloudDark}, {' ', ""},
+	},
+}
+
+// cloudLargeArt: 3-row anvil-head — wide asymmetric mass with internal
+// texture and strong shadow gradient.
+var cloudLargeArt = [][]cloudCell{
+	// row 0: bright leading turret + secondary bump
+	{
+		{' ', ""}, {' ', ""}, {'▄', colCloudBright}, {'█', colCloudBright}, {'▀', colCloudBright}, {'▄', colCloudBright}, {'█', colCloudMid}, {'▄', colCloudMid}, {' ', ""}, {' ', ""}, {' ', ""},
+	},
+	// row 1: wide body — lit left, shaded right
+	{
+		{' ', ""}, {'▄', colCloudBright}, {'█', colCloudMid}, {'░', colCloudMid}, {'█', colCloudMid}, {'█', colCloudMid}, {'░', colCloudShade}, {'█', colCloudShade}, {'▄', colCloudShade}, {' ', ""}, {' ', ""},
+	},
+	// row 2: heavy shadow base with dithering
+	{
+		{'▀', colCloudMid}, {'█', colCloudMid}, {'░', colCloudShade}, {'▄', colCloudShade}, {'█', colCloudShade}, {'░', colCloudDark}, {'▄', colCloudDark}, {'█', colCloudDark}, {'█', colCloudDark}, {'▀', colCloudDark}, {' ', ""},
+	},
+}
+
+var cloudArts = [][][]cloudCell{
+	cloudSmallArt,
+	cloudMediumArt,
+	cloudLargeArt,
+}
+
+// cloudWidth returns the column span of a cloud art by its style index.
+func cloudWidth(style int) int {
+	art := cloudArts[style%len(cloudArts)]
+	maxW := 0
+	for _, row := range art {
+		if len(row) > maxW {
+			maxW = len(row)
+		}
+	}
+	return maxW
 }
 
 var clouds []Cloud
 
+// cloudScrollOffset accumulates sub-pixel cloud movement, analogous to
+// scrollOffset for pipes.  Each cloud's screen column is computed on demand
+// via cloudScreenCol() using this offset plus render interpolation —
+// eliminating the integer "jump frame" stutter that plagued the old approach.
+var cloudScrollOffset float64
+
+// cloudScrollSpeed is the base cloud drift rate (pixels per physics tick).
+// Individual clouds multiply this by their own speed factor for parallax.
+const cloudScrollSpeed = 0.4
+
 func initClouds(w, h int) {
 	clouds = nil
+	cloudScrollOffset = 0
 	playH := h - groundHeight
+
+	// Spawn 5 clouds of varying sizes
 	for i := 0; i < 5; i++ {
+		style := i % 3 // cycles small, medium, large
+		sp := 1.0
+		if style == CloudSmall {
+			sp = 2.0 // small clouds move faster (closer to viewer)
+		}
 		clouds = append(clouds, Cloud{
-			row:   2 + rand.Intn(playH/2),
-			col:   rand.Intn(w),
-			style: rand.Intn(3),
+			row:   1 + rand.Intn(playH/3),
+			baseX: rand.Intn(w),
+			style: style,
+			speed: sp,
 		})
 	}
 }
 
-func (g *Game) renderClouds() {
-	cloudChars := []string{
-		"  ._===_.  ",
-		"   .-=-.   ",
-		" .--===--. ",
-	}
+// cloudScreenCol returns the screen column for a cloud, applying the smooth
+// scroll offset (scaled by the cloud's individual speed factor) plus render
+// interpolation — identical strategy to pipeScreenX() for jitter-free motion.
+func cloudScreenCol(cl Cloud, renderAlpha float64) int {
+	smoothOffset := cloudScrollOffset + cloudScrollSpeed*cl.speed*renderAlpha
+	return cl.baseX - int(math.Round(smoothOffset*cl.speed))
+}
 
+func (g *Game) renderClouds() {
 	for _, cl := range clouds {
-		art := cloudChars[cl.style%len(cloudChars)]
-		for i, ch := range art {
-			c := cl.col + i
-			r := cl.row
-			if c >= 0 && c < g.width && r >= 0 && r < g.playArea() {
-				if g.buf[r][c] == ' ' { // don't draw over pipes/bird
-					g.buf[r][c] = ch
-					g.colBuf[r][c] = colSky + fg256(153) // light cloud color
+		art := cloudArts[cl.style%len(cloudArts)]
+		screenCol := cloudScreenCol(cl, g.renderAlpha)
+		for dr, row := range art {
+			r := cl.row + dr
+			for dc, cell := range row {
+				c := screenCol + dc
+				if c >= 0 && c < g.width && r >= 0 && r < g.playArea() {
+					if cell.ch != ' ' && g.buf[r][c] == ' ' {
+						g.buf[r][c] = cell.ch
+						g.colBuf[r][c] = colSky + cell.col
+					}
 				}
 			}
 		}
 	}
 }
 
+// scrollClouds advances the cloud scroll offset by one physics step.
+// Individual clouds move at their own parallax speed via cloudScreenCol().
+// When a cloud scrolls off the left edge, it's recycled past the right edge.
 func scrollClouds(w int) {
+	cloudScrollOffset += cloudScrollSpeed
 	for i := range clouds {
-		clouds[i].col--
-		if clouds[i].col < -15 {
-			clouds[i].col = w + rand.Intn(20)
-			clouds[i].row = 2 + rand.Intn(8)
+		screenCol := cloudScreenCol(clouds[i], 0)
+		cw := cloudWidth(clouds[i].style)
+		if screenCol < -cw-2 {
+			// Recycle: place past right edge with a random offset
+			// Compute the new baseX so that cloudScreenCol returns ~(w + rand)
+			clouds[i].baseX = w + rand.Intn(20) + int(math.Round(cloudScrollOffset*clouds[i].speed))
+			clouds[i].row = 1 + rand.Intn(8)
 		}
 	}
 }
@@ -1026,9 +1150,6 @@ func main() {
 	// so game behavior is independent of render rate.
 	renderTicker := time.NewTicker(renderRate)
 	defer renderTicker.Stop()
-
-	cloudTicker := time.NewTicker(150 * time.Millisecond)
-	defer cloudTicker.Stop()
 
 	lastPhysics := time.Now()
 	physicsAccum := time.Duration(0)
@@ -1083,6 +1204,8 @@ func main() {
 					g.frameCount++
 					scrollClouds(g.width)
 				}
+				// Interpolate for smooth cloud rendering on title screen
+				g.renderAlpha = float64(physicsAccum) / float64(physicsRate)
 				if pendingFlap {
 					pendingFlap = false
 					g.startGame()
@@ -1097,6 +1220,7 @@ func main() {
 					physicsAccum -= physicsRate
 					g.renderAlpha = 0 // physics uses exact offset
 					g.update(pendingFlap)
+					scrollClouds(g.width)
 					pendingFlap = false // consumed on first physics tick
 				}
 				// Interpolate for smooth rendering between physics ticks
@@ -1129,11 +1253,6 @@ func main() {
 				g.renderGameOverOverlay()
 				output := g.render()
 				fmt.Print(output)
-			}
-
-		case <-cloudTicker.C:
-			if g.state != StateTitle {
-				scrollClouds(g.width)
 			}
 		}
 	}

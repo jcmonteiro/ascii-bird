@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"math"
 	"math/rand"
 	"strings"
 	"testing"
@@ -1223,13 +1224,20 @@ func TestClouds_Init(t *testing.T) {
 		t.Errorf("expected 5 clouds, got %d", len(clouds))
 	}
 	for i, cl := range clouds {
-		if cl.col < 0 || cl.col >= 80 {
-			t.Errorf("cloud %d col %d out of bounds", i, cl.col)
+		if cl.baseX < 0 || cl.baseX >= 80 {
+			t.Errorf("cloud %d baseX %d out of bounds", i, cl.baseX)
 		}
 		playH := 24 - groundHeight
-		if cl.row < 2 || cl.row >= 2+playH/2 {
-			t.Errorf("cloud %d row %d out of expected range [2, %d)", i, cl.row, 2+playH/2)
+		if cl.row < 1 || cl.row >= 1+playH/3 {
+			t.Errorf("cloud %d row %d out of expected range [1, %d)", i, cl.row, 1+playH/3)
 		}
+		if cl.speed < 1.0 || cl.speed > 2.0 {
+			t.Errorf("cloud %d speed %.1f out of expected range [1,2]", i, cl.speed)
+		}
+	}
+	// cloudScrollOffset should be reset by initClouds
+	if cloudScrollOffset != 0 {
+		t.Errorf("cloudScrollOffset should be 0 after init, got %f", cloudScrollOffset)
 	}
 }
 
@@ -1237,16 +1245,23 @@ func TestClouds_ScrollLeft(t *testing.T) {
 	rand.Seed(42)
 	initClouds(80, 24)
 
-	originalCols := make([]int, len(clouds))
+	// Record initial screen positions (before scrolling)
+	originalScreenCols := make([]int, len(clouds))
 	for i, cl := range clouds {
-		originalCols[i] = cl.col
+		originalScreenCols[i] = cloudScreenCol(cl, 0)
 	}
 
-	scrollClouds(80)
+	// Scroll enough ticks that even speed=1.0 clouds move at least 1 pixel.
+	// cloudScrollSpeed=0.4, so after 3 ticks offset=1.2 → Round(1.2*1.0)=1
+	for k := 0; k < 3; k++ {
+		scrollClouds(80)
+	}
 
 	for i, cl := range clouds {
-		if cl.col >= originalCols[i] && originalCols[i] > -15 {
-			t.Errorf("cloud %d should have scrolled left: was %d, now %d", i, originalCols[i], cl.col)
+		screenCol := cloudScreenCol(cl, 0)
+		cw := cloudWidth(cl.style)
+		if screenCol >= originalScreenCols[i] && originalScreenCols[i] > -(cw+2) {
+			t.Errorf("cloud %d should have scrolled left: was %d, now %d", i, originalScreenCols[i], screenCol)
 		}
 	}
 }
@@ -1255,13 +1270,17 @@ func TestClouds_Recycle(t *testing.T) {
 	rand.Seed(42)
 	initClouds(80, 24)
 
-	// Force a cloud off screen
-	clouds[0].col = -16
+	// Force a cloud well past its recycle threshold by setting its baseX
+	// so that cloudScreenCol returns a value past the left edge
+	cw := cloudWidth(clouds[0].style)
+	// Set baseX so screen col will be < -(cw+2) before scrolling
+	clouds[0].baseX = -(cw + 3) + int(math.Round(cloudScrollOffset*clouds[0].speed))
 	scrollClouds(80)
 
 	// Cloud should have been recycled to right side
-	if clouds[0].col < 80 {
-		t.Errorf("off-screen cloud should recycle to right side, got col %d", clouds[0].col)
+	screenCol := cloudScreenCol(clouds[0], 0)
+	if screenCol < 80 {
+		t.Errorf("off-screen cloud should recycle to right side, got screen col %d", screenCol)
 	}
 }
 
@@ -1270,16 +1289,18 @@ func TestClouds_RenderedInBuffer(t *testing.T) {
 	rand.Seed(42)
 	initClouds(g.width, g.height)
 
-	// Position a cloud visibly
-	clouds[0] = Cloud{row: 5, col: 10, style: 0}
+	// Position a small cloud visibly
+	cloudScrollOffset = 0
+	clouds[0] = Cloud{row: 5, baseX: 10, style: CloudSmall, speed: 1.0}
 
 	g.clearBuf()
 	g.renderClouds()
 	text := g.bufText()
 
-	cloudChars := "._===_."
+	// New cloud art uses block characters (▄ ▀ █ ░) instead of ASCII punctuation
+	cloudBlockChars := "▄▀█░"
 	foundCloud := false
-	for _, ch := range cloudChars {
+	for _, ch := range cloudBlockChars {
 		if strings.ContainsRune(text, ch) {
 			foundCloud = true
 			break
@@ -1287,14 +1308,15 @@ func TestClouds_RenderedInBuffer(t *testing.T) {
 	}
 
 	if !foundCloud {
-		t.Error("cloud characters should be visible in the buffer when positioned on screen")
+		t.Error("cloud block characters should be visible in the buffer when positioned on screen")
 	}
 }
 
 func TestClouds_DontOverwritePipes(t *testing.T) {
 	g := testGame()
 	g.startGame()
-	clouds = []Cloud{{row: 5, col: 40, style: 0}}
+	cloudScrollOffset = 0
+	clouds = []Cloud{{row: 5, baseX: 40, style: CloudSmall, speed: 1.0}}
 
 	// Place pipe at same location
 	g.pipes = []Pipe{{x: 40, gapTop: 3}}
@@ -2077,4 +2099,112 @@ func TestDiffRender_MovingPipeOutputScalesWithDelta(t *testing.T) {
 			diffSize, fullFrameEstimate)
 	}
 	t.Logf("  pipe move: diff=%d bytes (vs ~%d byte full frame)", diffSize, fullFrameEstimate)
+}
+
+// ═══════════════════════════════════════════
+// 21. CLOUD VARIATIONS & PARALLAX
+// ═══════════════════════════════════════════
+
+func TestCloudVariations_ThreeSizes(t *testing.T) {
+	// Verify all three cloud sizes have valid art with increasing width
+	widths := []int{
+		cloudWidth(CloudSmall),
+		cloudWidth(CloudMedium),
+		cloudWidth(CloudLarge),
+	}
+	for i, w := range widths {
+		if w < 3 {
+			t.Errorf("cloud size %d width %d too narrow (min 3)", i, w)
+		}
+	}
+	// Each successive size should be wider or equal
+	if widths[1] < widths[0] {
+		t.Errorf("medium cloud (%d) should be >= small cloud (%d) width", widths[1], widths[0])
+	}
+	if widths[2] < widths[1] {
+		t.Errorf("large cloud (%d) should be >= medium cloud (%d) width", widths[2], widths[1])
+	}
+	t.Logf("  cloud widths: small=%d, medium=%d, large=%d", widths[0], widths[1], widths[2])
+}
+
+func TestCloudVariations_AllRenderableOnScreen(t *testing.T) {
+	g := testGame()
+
+	for style := CloudSmall; style <= CloudLarge; style++ {
+		cloudScrollOffset = 0
+		clouds = []Cloud{{row: 4, baseX: 10, style: style, speed: 1.0}}
+
+		g.clearBuf()
+		g.renderClouds()
+		text := g.bufText()
+
+		// Every cloud style should produce at least one visible block character
+		blockChars := "▄▀█░"
+		found := false
+		for _, ch := range blockChars {
+			if strings.ContainsRune(text, ch) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("cloud style %d should render visible block characters", style)
+		}
+	}
+}
+
+func TestCloudVariations_ParallaxSpeed(t *testing.T) {
+	rand.Seed(42)
+	initClouds(80, 24)
+
+	// Small clouds should move at speed 2 (faster = nearer)
+	// Medium and large clouds should move at speed 1 (slower = farther)
+	for _, cl := range clouds {
+		switch cl.style {
+		case CloudSmall:
+			if cl.speed != 2.0 {
+				t.Errorf("small cloud should have speed 2.0, got %.1f", cl.speed)
+			}
+		case CloudMedium, CloudLarge:
+			if cl.speed != 1.0 {
+				t.Errorf("cloud style %d should have speed 1.0, got %.1f", cl.style, cl.speed)
+			}
+		}
+	}
+}
+
+func TestCloudParallax_SmallMovesFasterThanLarge(t *testing.T) {
+	// Set up one small and one large cloud at the same base position
+	cloudScrollOffset = 0
+	clouds = []Cloud{
+		{row: 3, baseX: 50, style: CloudSmall, speed: 2.0},
+		{row: 6, baseX: 50, style: CloudLarge, speed: 1.0},
+	}
+
+	scrollClouds(80)
+
+	smallCol := cloudScreenCol(clouds[0], 0)
+	largeCol := cloudScreenCol(clouds[1], 0)
+	if smallCol >= largeCol {
+		t.Errorf("small cloud (speed 2) should have moved further left than large cloud (speed 1): small=%d, large=%d",
+			smallCol, largeCol)
+	}
+}
+
+func TestCloudArt_NonEmptyRows(t *testing.T) {
+	// Each cloud art should have at least one non-space cell per row
+	for styleIdx, art := range cloudArts {
+		for rowIdx, row := range art {
+			hasContent := false
+			for _, cell := range row {
+				if cell.ch != ' ' {
+					hasContent = true
+					break
+				}
+			}
+			if !hasContent {
+				t.Errorf("cloud style %d row %d has no visible content", styleIdx, rowIdx)
+			}
+		}
+	}
 }
