@@ -158,8 +158,8 @@ func TestDie_TransitionsState(t *testing.T) {
 	g.startGame()
 	g.score = 5
 	g.die()
-	if g.state != StateDead {
-		t.Errorf("expected StateDead, got %d", g.state)
+	if g.state != StateDying {
+		t.Errorf("expected StateDying, got %d", g.state)
 	}
 	if g.bestScore != 5 {
 		t.Errorf("expected bestScore 5, got %d", g.bestScore)
@@ -493,13 +493,13 @@ func TestPipeGeneration_Recycling(t *testing.T) {
 	for i := 0; i < 200; i++ {
 		g.update(true) // keep flapping to stay alive
 		// Reset bird to safe position to avoid dying
-		if g.state == StateDead {
+		if g.state == StateDying || g.state == StateDead {
 			break
 		}
 	}
 
 	// Pipe count should remain stable (old ones removed, new ones added)
-	if g.state != StateDead && len(g.pipes) < initialCount-1 {
+	if g.state != StateDying && g.state != StateDead && len(g.pipes) < initialCount-1 {
 		t.Errorf("pipe count dropped too low: started %d, now %d", initialCount, len(g.pipes))
 	}
 }
@@ -1574,17 +1574,17 @@ func TestBirdAtBottomEdge(t *testing.T) {
 func TestUpdate_DoesNothingWhenDead(t *testing.T) {
 	g := testGame()
 	g.startGame()
-	g.die()
+	g.die() // transitions to StateDying
 
 	beforeY := g.bird.y
 	beforeScore := g.score
-	g.update(true) // try to flap while dead
+	g.update(true) // should be no-op in StateDying
 
 	if g.bird.y != beforeY {
-		t.Error("update should not change bird position when dead")
+		t.Error("update should not change bird position when dying/dead")
 	}
 	if g.score != beforeScore {
-		t.Error("update should not change score when dead")
+		t.Error("update should not change score when dying/dead")
 	}
 }
 
@@ -1624,12 +1624,12 @@ func TestFullGameSimulation_PlayAndDie(t *testing.T) {
 	// Simulate falling to death (no flapping)
 	for i := 0; i < 100; i++ {
 		g.update(false)
-		if g.state == StateDead {
+		if g.state == StateDying || g.state == StateDead {
 			break
 		}
 	}
 
-	if g.state != StateDead {
+	if g.state != StateDying && g.state != StateDead {
 		t.Error("bird should have died from hitting the ground")
 	}
 	t.Logf("  bird died at y=%.1f after falling (playArea=%d)", g.bird.y, g.playArea())
@@ -1651,7 +1651,7 @@ func TestFullGameSimulation_FlapSurvival(t *testing.T) {
 	for i := 0; i < 60; i++ {
 		flap := g.bird.y > lowerThird && g.bird.vy > 0
 		g.update(flap)
-		if g.state == StateDead {
+		if g.state == StateDying || g.state == StateDead {
 			alive = false
 			break
 		}
@@ -1681,7 +1681,7 @@ func TestFullGameSimulation_CompleteRenderCycle(t *testing.T) {
 	// Several frames of gameplay render
 	for i := 0; i < 10; i++ {
 		g.update(i%3 == 0)
-		if g.state == StateDead {
+		if g.state == StateDying || g.state == StateDead {
 			break
 		}
 		g.clearBuf()
@@ -1698,6 +1698,10 @@ func TestFullGameSimulation_CompleteRenderCycle(t *testing.T) {
 
 	// Force death and check game over overlay
 	g.die()
+	// Complete dying animation so we're in StateDead for overlay
+	for i := 0; i < deathAnimTicks+1; i++ {
+		g.updateDying()
+	}
 	g.clearBuf()
 	g.renderGround()
 	g.renderClouds()
@@ -2206,5 +2210,430 @@ func TestCloudArt_NonEmptyRows(t *testing.T) {
 				t.Errorf("cloud style %d row %d has no visible content", styleIdx, rowIdx)
 			}
 		}
+	}
+}
+
+// ═══════════════════════════════════════════
+// 22. DEATH ANIMATION
+// ═══════════════════════════════════════════
+
+func TestDeath_TransitionsToStateDying(t *testing.T) {
+	g := testGame()
+	g.startGame()
+	g.score = 5
+	g.die()
+
+	if g.state != StateDying {
+		t.Errorf("die() should transition to StateDying, got %d", g.state)
+	}
+}
+
+func TestDeath_BestScoreUpdatedOnDie(t *testing.T) {
+	g := testGame()
+	g.startGame()
+	g.score = 12
+	g.die()
+
+	if g.bestScore != 12 {
+		t.Errorf("bestScore should be set on die(), got %d", g.bestScore)
+	}
+}
+
+func TestDeath_DeathTimerStartsAtZero(t *testing.T) {
+	g := testGame()
+	g.startGame()
+	g.die()
+
+	if g.deathTimer != 0 {
+		t.Errorf("deathTimer should start at 0, got %d", g.deathTimer)
+	}
+}
+
+func TestDeath_FullRedrawOnDie(t *testing.T) {
+	g := testGame()
+	g.startGame()
+	g.fullRedraw = false
+	g.die()
+
+	if !g.fullRedraw {
+		t.Error("die() should set fullRedraw=true")
+	}
+}
+
+func TestDeath_UpdateDyingAdvancesTimer(t *testing.T) {
+	g := testGame()
+	g.startGame()
+	g.pipes = nil
+	g.die()
+
+	g.updateDying()
+	if g.deathTimer != 1 {
+		t.Errorf("deathTimer should be 1 after one updateDying(), got %d", g.deathTimer)
+	}
+
+	g.updateDying()
+	if g.deathTimer != 2 {
+		t.Errorf("deathTimer should be 2 after two updateDying(), got %d", g.deathTimer)
+	}
+}
+
+func TestDeath_BirdFallsDuringDying(t *testing.T) {
+	g := testGame()
+	g.startGame()
+	g.pipes = nil
+	g.bird.y = 5.0
+	g.bird.vy = 0
+	g.die()
+
+	initialY := g.bird.y
+	for i := 0; i < 5; i++ {
+		g.updateDying()
+	}
+
+	if g.bird.y <= initialY {
+		t.Errorf("bird should fall during dying: started at %f, now at %f", initialY, g.bird.y)
+	}
+}
+
+func TestDeath_BirdCannotFlapDuringDying(t *testing.T) {
+	g := testGame()
+	g.startGame()
+	g.pipes = nil
+	g.bird.y = 10.0
+	g.bird.vy = 0
+	g.die()
+
+	// Simulate several ticks — bird should only fall, never rise
+	for i := 0; i < 10; i++ {
+		g.updateDying()
+	}
+
+	// vy should be positive (falling) the entire time — no flap resets it
+	if g.bird.vy < 0 {
+		t.Errorf("bird vy should be positive (falling) during dying, got %f", g.bird.vy)
+	}
+}
+
+func TestDeath_TransitionsToDeadAfterAnimation(t *testing.T) {
+	g := testGame()
+	g.startGame()
+	g.pipes = nil
+	g.die()
+
+	// Run enough ticks to complete the death animation
+	for i := 0; i < deathAnimTicks+5; i++ {
+		if g.state == StateDead {
+			break
+		}
+		g.updateDying()
+	}
+
+	if g.state != StateDead {
+		t.Errorf("state should be StateDead after animation completes, got %d", g.state)
+	}
+}
+
+func TestDeath_FullRedrawOnTransitionToDead(t *testing.T) {
+	g := testGame()
+	g.startGame()
+	g.pipes = nil
+	g.die()
+
+	// Run until just before transition
+	for i := 0; i < deathAnimTicks-1; i++ {
+		g.updateDying()
+	}
+	g.fullRedraw = false
+
+	// This tick should trigger the transition to StateDead
+	g.updateDying()
+
+	if g.state != StateDead {
+		t.Fatalf("expected StateDead, got %d", g.state)
+	}
+	if !g.fullRedraw {
+		t.Error("transition to StateDead should set fullRedraw=true for overlay")
+	}
+}
+
+func TestDeath_FlashPhaseEarlyTicks(t *testing.T) {
+	g := testGame()
+	g.startGame()
+	g.pipes = nil
+	g.bird.y = 10.0
+	g.die()
+
+	// During early ticks, the sky background should flash (different from colSky)
+	g.updateDying()
+	g.clearBufDying()
+
+	// Check that at least one sky cell has the flash color
+	foundFlash := false
+	for c := 0; c < g.width; c++ {
+		if g.colBuf[0][c] != colSky && g.colBuf[0][c] != "" {
+			foundFlash = true
+			break
+		}
+	}
+	if !foundFlash {
+		t.Error("early death ticks should flash the sky background")
+	}
+}
+
+func TestDeath_FlashFadesBack(t *testing.T) {
+	g := testGame()
+	g.startGame()
+	g.pipes = nil
+	g.bird.y = 10.0
+	g.die()
+
+	// Advance past flash phase
+	for i := 0; i < deathFlashTicks+2; i++ {
+		g.updateDying()
+	}
+	g.clearBufDying()
+
+	// After flash phase, sky should be back to normal
+	if g.colBuf[0][0] != colSky {
+		t.Errorf("sky should return to normal after flash phase, got %q", g.colBuf[0][0])
+	}
+}
+
+func TestDeath_BirdRenderedRedDuringDying(t *testing.T) {
+	g := testGame()
+	g.startGame()
+	g.pipes = nil
+	g.bird.y = 10.0
+	g.bird.vy = 0
+	g.die()
+
+	g.updateDying()
+	g.clearBufDying()
+	g.renderBirdDying()
+
+	// Bird body cell should contain the death color, not the normal bird body color
+	row := int(math.Round(g.bird.y))
+	col := g.bird.x
+	if row >= 0 && row < g.playArea() && col >= 0 && col < g.width {
+		bodyCol := g.colBuf[row+1][col]
+		if !strings.Contains(bodyCol, colDeathBird) {
+			t.Errorf("bird body should have death color during dying, got %q", bodyCol)
+		}
+	}
+}
+
+func TestDeath_GameOverNotShownDuringDying(t *testing.T) {
+	g := testGame()
+	g.startGame()
+	g.pipes = nil
+	g.bird.y = 10.0
+	g.die()
+
+	// Render a dying frame (not the full game-over overlay)
+	g.updateDying()
+	g.clearBufDying()
+	g.renderGround()
+	g.renderPipes()
+	g.renderBirdDying()
+	g.renderScore()
+	text := g.bufText()
+
+	if strings.Contains(text, "GAME OVER") {
+		t.Error("GAME OVER overlay should not appear during StateDying")
+	}
+}
+
+func TestDeath_GameOverShownAfterDying(t *testing.T) {
+	g := testGame()
+	g.startGame()
+	g.pipes = nil
+	g.bird.y = 10.0
+	g.die()
+
+	// Complete the death animation
+	for i := 0; i < deathAnimTicks+1; i++ {
+		g.updateDying()
+	}
+
+	if g.state != StateDead {
+		t.Fatalf("expected StateDead, got %d", g.state)
+	}
+
+	// Now render the dead state — overlay should be present
+	g.clearBuf()
+	g.renderGround()
+	g.renderBird()
+	g.renderScore()
+	g.renderGameOverOverlay()
+	text := g.bufText()
+
+	if !strings.Contains(text, "GAME OVER") {
+		t.Error("GAME OVER overlay should appear after death animation completes")
+	}
+}
+
+func TestDeath_UpdateIgnoredDuringDying(t *testing.T) {
+	g := testGame()
+	g.startGame()
+	g.pipes = nil
+	g.die()
+
+	beforeScore := g.score
+	g.update(true) // should be no-op in StateDying
+
+	if g.score != beforeScore {
+		t.Error("update() should not change score during StateDying")
+	}
+}
+
+// ═══════════════════════════════════════════
+// 23. SCROLLING GROUND
+// ═══════════════════════════════════════════
+
+func TestScrollingGround_DifferentAtDifferentOffsets(t *testing.T) {
+	g := testGame()
+	g.startGame()
+
+	g.scrollOffset = 0
+	g.renderAlpha = 0
+	g.clearBuf()
+	g.renderGround()
+	row0 := g.bufRow(g.playArea())
+
+	g.scrollOffset = 3.0
+	g.clearBuf()
+	g.renderGround()
+	row3 := g.bufRow(g.playArea())
+
+	if row0 == row3 {
+		t.Error("ground should look different at different scroll offsets")
+	}
+}
+
+func TestScrollingGround_GrassRowStillFilled(t *testing.T) {
+	g := testGame()
+	g.startGame()
+	g.scrollOffset = 7.5
+	g.renderAlpha = 0.3
+
+	g.clearBuf()
+	g.renderGround()
+
+	playH := g.playArea()
+	for c := 0; c < g.width; c++ {
+		ch := g.buf[playH][c]
+		if ch == ' ' {
+			t.Errorf("grass row col %d should not be empty at scrollOffset=7.5", c)
+		}
+	}
+}
+
+func TestScrollingGround_DirtRowStillFilled(t *testing.T) {
+	g := testGame()
+	g.startGame()
+	g.scrollOffset = 12.0
+	g.renderAlpha = 0
+
+	g.clearBuf()
+	g.renderGround()
+
+	for r := g.playArea() + 1; r < g.height; r++ {
+		for c := 0; c < g.width; c++ {
+			ch := g.buf[r][c]
+			if ch == ' ' {
+				t.Errorf("dirt row %d col %d should not be empty", r, c)
+			}
+		}
+	}
+}
+
+func TestScrollingGround_GrassHasPattern(t *testing.T) {
+	g := testGame()
+	g.startGame()
+	g.scrollOffset = 0
+	g.renderAlpha = 0
+
+	g.clearBuf()
+	g.renderGround()
+
+	playH := g.playArea()
+	// Grass row should contain both pattern characters (▓ and ▒)
+	grassRow := g.bufRow(playH)
+	has1 := strings.ContainsRune(grassRow, '▓')
+	has2 := strings.ContainsRune(grassRow, '▒')
+	if !has1 || !has2 {
+		t.Errorf("grass should have both ▓ and ▒ characters for texture, got: ▓=%v ▒=%v", has1, has2)
+	}
+}
+
+func TestScrollingGround_DirtHasPattern(t *testing.T) {
+	g := testGame()
+	g.startGame()
+	g.scrollOffset = 0
+	g.renderAlpha = 0
+
+	g.clearBuf()
+	g.renderGround()
+
+	if g.playArea()+1 < g.height {
+		dirtRow := g.bufRow(g.playArea() + 1)
+		has1 := strings.ContainsRune(dirtRow, '░')
+		has2 := strings.ContainsRune(dirtRow, '▒')
+		if !has1 || !has2 {
+			t.Errorf("dirt should have both ░ and ▒ characters for texture, got: ░=%v ▒=%v", has1, has2)
+		}
+	}
+}
+
+func TestScrollingGround_WrapsCorrectly(t *testing.T) {
+	g := testGame()
+	g.startGame()
+
+	// Two offsets separated by the pattern length should produce identical output
+	g.scrollOffset = 0
+	g.renderAlpha = 0
+	g.clearBuf()
+	g.renderGround()
+	row0 := g.bufRow(g.playArea())
+
+	g.scrollOffset = float64(len(grassPattern))
+	g.clearBuf()
+	g.renderGround()
+	rowWrap := g.bufRow(g.playArea())
+
+	if row0 != rowWrap {
+		t.Errorf("ground should wrap after pattern length (%d), but rows differ", len(grassPattern))
+	}
+}
+
+func TestScrollingGround_ColorsDifferFromSky(t *testing.T) {
+	g := testGame()
+	g.startGame()
+	g.scrollOffset = 5.0
+	g.renderAlpha = 0
+
+	g.clearBuf()
+	g.renderGround()
+
+	playH := g.playArea()
+	if playH < g.height && g.colBuf[playH][0] == colSky {
+		t.Error("grass should have distinct color from sky even with scrolling")
+	}
+}
+
+func TestScrollingGround_TitleScreenAlsoScrolls(t *testing.T) {
+	g := testGame()
+	// Title screen renders ground too
+	g.scrollOffset = 0
+	g.renderAlpha = 0
+	g.renderTitleScreen()
+	row0 := g.bufRow(g.playArea())
+
+	g.scrollOffset = 4.0
+	g.renderTitleScreen()
+	row4 := g.bufRow(g.playArea())
+
+	if row0 == row4 {
+		t.Error("title screen ground should also scroll with offset")
 	}
 }

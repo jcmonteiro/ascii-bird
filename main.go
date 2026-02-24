@@ -75,8 +75,8 @@ const reset = "\033[0m"
 // Nothing is flat-filled.  The palette deliberately avoids the SNES-era flat-pastel look.
 var (
 	colSky       = bg256(117)                  // light blue bg
-	colGround    = bg256(94) + fg256(94)       // brown
-	colGrass     = bg256(34) + fg256(34)       // green grass top
+	colGround    = bg256(94) + fg256(130)      // brown dirt: dark brown bg, lighter brown fg for texture
+	colGrass     = bg256(34) + fg256(28)       // green grass: bright green bg, darker green fg for texture
 	colPipe      = bg256(34) + fg256(22)       // green pipe
 	colPipeCap   = bg256(28) + fg256(22)       // darker green cap
 	colBirdBody  = fg256(226)                  // yellow
@@ -94,6 +94,10 @@ var (
 	colCloudMid    = fg256(252) // light grey — body fill
 	colCloudShade  = fg256(249) // medium grey — shadow underside/right
 	colCloudDark   = fg256(245) // darker grey — deep shadow accent
+
+	// Death animation palette
+	colDeathFlash = bg256(224) // pale pink/red flash — momentary impact shock
+	colDeathBird  = fg256(196) // bright red — the bird knows it messed up
 )
 
 // ──────────────────────────
@@ -111,7 +115,18 @@ const (
 	groundHeight = 3
 	physicsRate  = 33 * time.Millisecond // 30 Hz — fixed simulation step
 	renderRate   = 16 * time.Millisecond // ~60 FPS — differential rendering keeps output minimal
+
+	// Death animation timing
+	deathFlashTicks = 4  // ticks of sky-flash (bright white → red → fade)
+	deathAnimTicks  = 20 // total ticks before transitioning to StateDead
+	deathGravity    = 0.25 // heavier gravity during tumble — bird drops faster than gameplay
 )
+
+// Ground texture patterns — repeating rune sequences that scroll with the
+// game world. The grass row alternates dense/medium block fills for a
+// natural clumpy look; dirt rows use lighter fills for loose earth texture.
+var grassPattern = []rune{'▓', '▓', '▒', '▓', '▓', '▓', '▒', '▒'}
+var dirtPattern = []rune{'░', '░', '▒', '░', '░', '▒', '░', '░', '░', '▒'}
 
 // ──────────────────────────
 // Bird sprite system — each bird is a 3×2 grid of (rune, color) cells
@@ -203,6 +218,7 @@ type GameState int
 const (
 	StateTitle GameState = iota
 	StatePlaying
+	StateDying // death animation in progress — bird tumbles, screen flashes
 	StateDead
 )
 
@@ -216,6 +232,7 @@ type Game struct {
 	frameCount    int
 	scrollOffset  float64     // smooth sub-pixel scroll offset (accumulated pipeSpeed)
 	renderAlpha   float64     // interpolation fraction for render between physics steps
+	deathTimer    int         // frame counter for death animation (0 at start of dying)
 	renderBuf     bytes.Buffer // reusable render output buffer (retains allocation across frames)
 	buf           [][]rune    // character buffer (back buffer — current frame)
 	colBuf        [][]string  // color buffer (back buffer — current frame)
@@ -457,10 +474,93 @@ func (g *Game) checkCollision() bool {
 }
 
 func (g *Game) die() {
-	g.state = StateDead
-	g.fullRedraw = true // force full repaint to draw game-over overlay cleanly
+	g.state = StateDying
+	g.deathTimer = 0
+	g.fullRedraw = true // force full repaint for flash effect
 	if g.score > g.bestScore {
 		g.bestScore = g.score
+	}
+}
+
+// updateDying advances the death animation by one physics tick.
+// The bird tumbles under heavier gravity (no flap allowed).
+// After deathAnimTicks, the state transitions to StateDead.
+func (g *Game) updateDying() {
+	g.deathTimer++
+
+	// Bird tumbles with heavier gravity — no flap, no mercy
+	g.bird.vy += deathGravity
+	if g.bird.vy > maxFallSpeed {
+		g.bird.vy = maxFallSpeed
+	}
+	g.bird.y += g.bird.vy
+
+	// Clamp bird to not fall infinitely below ground
+	playH := g.playArea()
+	if g.bird.y > float64(playH) {
+		g.bird.y = float64(playH)
+	}
+
+	if g.deathTimer >= deathAnimTicks {
+		g.state = StateDead
+		g.fullRedraw = true // force full repaint for game-over overlay
+	}
+}
+
+// clearBufDying fills the back buffer like clearBuf, but applies the
+// screen flash effect during the early death animation ticks.
+// Flash fades: bright flash → colDeathFlash → back to colSky.
+func (g *Game) clearBufDying() {
+	bg := colSky
+	if g.deathTimer <= deathFlashTicks {
+		bg = colDeathFlash
+	}
+	for r := 0; r < g.height; r++ {
+		for c := 0; c < g.width; c++ {
+			g.buf[r][c] = ' '
+			g.colBuf[r][c] = bg
+		}
+	}
+}
+
+// renderBirdDying renders the bird with the death color override.
+// Same geometry as renderBird() but every non-empty cell uses colDeathBird.
+func (g *Game) renderBirdDying() {
+	row := int(math.Round(g.bird.y))
+	col := g.bird.x
+	playH := g.playArea()
+
+	if row < 0 || row >= playH {
+		return
+	}
+
+	// Pick wing frame from current sprite (frozen frame — no animation during death)
+	sp := &birdSprites[g.bird.sprite]
+	frame := &sp.wingDn // wings down — limp, defeated
+
+	// Determine the sky bg for this frame (might be flash color)
+	bg := colSky
+	if g.deathTimer <= deathFlashTicks {
+		bg = colDeathFlash
+	}
+
+	for dr := 0; dr < 2; dr++ {
+		r := row + dr
+		if r < 0 || r >= playH {
+			continue
+		}
+		for dc := 0; dc < 3; dc++ {
+			c := col - 1 + dc
+			if c < 0 || c >= g.width {
+				continue
+			}
+			cell := frame[dr][dc]
+			if cell.ch == 0 {
+				continue
+			}
+			g.buf[r][c] = cell.ch
+			g.colBuf[r][c] = bg + colDeathBird
+		}
 	}
 }
 
@@ -479,17 +579,25 @@ func (g *Game) clearBuf() {
 
 func (g *Game) renderGround() {
 	playH := g.playArea()
-	// Grass line
+	// Smooth scroll offset for ground texture (same as pipes)
+	scrollPx := int(math.Round(g.scrollOffset + pipeSpeed*g.renderAlpha))
+
+	// Grass line — scrolling texture pattern
 	if playH < g.height {
+		gl := len(grassPattern)
 		for c := 0; c < g.width; c++ {
-			g.buf[playH][c] = '▓'
+			idx := ((c + scrollPx) % gl + gl) % gl // always positive mod
+			g.buf[playH][c] = grassPattern[idx]
 			g.colBuf[playH][c] = colGrass
 		}
 	}
-	// Dirt
+	// Dirt rows — scrolling texture pattern (slightly slower for subtle parallax)
+	dl := len(dirtPattern)
+	dirtScroll := int(math.Round((g.scrollOffset + pipeSpeed*g.renderAlpha) * 0.7))
 	for r := playH + 1; r < g.height; r++ {
 		for c := 0; c < g.width; c++ {
-			g.buf[r][c] = '░'
+			idx := ((c + dirtScroll) % dl + dl) % dl
+			g.buf[r][c] = dirtPattern[idx]
 			g.colBuf[r][c] = colGround
 		}
 	}
@@ -1180,8 +1288,13 @@ func main() {
 
 			if pendingQuit {
 				pendingQuit = false
-				if g.state == StatePlaying {
-					g.die()
+				if g.state == StatePlaying || g.state == StateDying {
+					// During playing or dying, quit skips straight to dead
+					g.state = StateDead
+					g.fullRedraw = true
+					if g.score > g.bestScore {
+						g.bestScore = g.score
+					}
 				} else {
 				once.Do(func() { close(quitCh) })
 				showCursor()
@@ -1222,17 +1335,63 @@ func main() {
 					g.update(pendingFlap)
 					scrollClouds(g.width)
 					pendingFlap = false // consumed on first physics tick
+					// If die() was called, break out — StateDying handles the rest
+					if g.state != StatePlaying {
+						break
+					}
 				}
-				// Interpolate for smooth rendering between physics ticks
-				g.renderAlpha = float64(physicsAccum) / float64(physicsRate)
-				g.clearBuf()
-				g.renderGround()
-				g.renderClouds()
-				g.renderPipes()
-				g.renderBird()
-				g.renderScore()
+				if g.state == StateDying {
+					// Transition happened mid-frame — render dying state
+					pendingFlap = false
+					g.renderAlpha = 0
+					g.clearBufDying()
+					g.renderGround()
+					g.renderClouds()
+					g.renderPipes()
+					g.renderBirdDying()
+					g.renderScore()
+					output := g.render()
+					fmt.Print(output)
+				} else {
+					// Interpolate for smooth rendering between physics ticks
+					g.renderAlpha = float64(physicsAccum) / float64(physicsRate)
+					g.clearBuf()
+					g.renderGround()
+					g.renderClouds()
+					g.renderPipes()
+					g.renderBird()
+					g.renderScore()
+					output := g.render()
+					fmt.Print(output)
+				}
+
+			case StateDying:
+				pendingFlap = false // flap does nothing during death
+				for physicsAccum >= physicsRate {
+					physicsAccum -= physicsRate
+					g.updateDying()
+					if g.state == StateDead {
+						break
+					}
+				}
 				if g.state == StateDead {
+					// Animation complete — render the dead state immediately
+					g.renderAlpha = 0
+					g.clearBuf()
+					g.renderGround()
+					g.renderClouds()
+					g.renderPipes()
+					g.renderBird()
+					g.renderScore()
 					g.renderGameOverOverlay()
+				} else {
+					g.renderAlpha = 0 // no interpolation during dying
+					g.clearBufDying()
+					g.renderGround()
+					g.renderClouds()
+					g.renderPipes()
+					g.renderBirdDying()
+					g.renderScore()
 				}
 				output := g.render()
 				fmt.Print(output)
