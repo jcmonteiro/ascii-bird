@@ -17,37 +17,10 @@ import (
 )
 
 // ──────────────────────────────────────────────
-// Terminal helpers (raw mode, size, cursor, etc.)
+// Terminal helpers (size, cursor, etc.)
+// enableRawMode / disableRawMode live in
+// term_darwin.go and term_linux.go (build-tagged).
 // ──────────────────────────────────────────────
-
-var origTermios *unix.Termios
-
-func enableRawMode() {
-	fd := int(os.Stdin.Fd())
-	t, err := unix.IoctlGetTermios(fd, unix.TIOCGETA)
-	if err != nil {
-		panic(err)
-	}
-	origTermios = t
-
-	raw := *t
-	raw.Iflag &^= unix.BRKINT | unix.ICRNL | unix.INPCK | unix.ISTRIP | unix.IXON
-	raw.Oflag &^= unix.OPOST
-	raw.Cflag |= unix.CS8
-	raw.Lflag &^= unix.ECHO | unix.ICANON | unix.IEXTEN | unix.ISIG
-	raw.Cc[unix.VMIN] = 0
-	raw.Cc[unix.VTIME] = 0
-
-	if err := unix.IoctlSetTermios(fd, unix.TIOCSETA, &raw); err != nil {
-		panic(err)
-	}
-}
-
-func disableRawMode() {
-	if origTermios != nil {
-		unix.IoctlSetTermios(int(os.Stdin.Fd()), unix.TIOCSETA, origTermios)
-	}
-}
 
 func getTermSize() (int, int) {
 	ws, err := unix.IoctlGetWinsize(int(os.Stdout.Fd()), unix.TIOCGWINSZ)
