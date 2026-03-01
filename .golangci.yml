@@ -1,6 +1,7 @@
 version: "2"
 
 linters:
+  # Keep lint scope aligned with existing project practice (`go vet ./...`).
   default: none
   enable:
     - govet
