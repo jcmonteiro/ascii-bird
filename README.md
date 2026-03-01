@@ -39,6 +39,15 @@ That's it. No flags. No config files. `go build` is faster than opening Unity an
 
 **Requirements:** Go 1.21+, macOS/Linux (I use `golang.org/x/sys/unix` — Windows users, WSL is your friend), and a terminal emulator that isn't from 1987.
 
+## Pre-commit Checks (for people who enjoy passing CI on the first try)
+
+```bash
+pip install pre-commit
+pre-commit install
+```
+
+Pre-commit now runs `go fmt ./...` and `golangci-lint run` before commit, so your branch can fail fast locally instead of embarrassing itself in CI.
+
 ## Tuning
 
 | Constant       | Value          | Why                                                      |
