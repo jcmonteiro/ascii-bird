@@ -30,9 +30,9 @@ func getTermSize() (int, int) {
 	return int(ws.Col), int(ws.Row)
 }
 
-func hideCursor()       { fmt.Print("\033[?25l") }
-func showCursor()       { fmt.Print("\033[?25h") }
-func clearScreen()      { fmt.Print("\033[2J") }
+func hideCursor()         { fmt.Print("\033[?25l") }
+func showCursor()         { fmt.Print("\033[?25h") }
+func clearScreen()        { fmt.Print("\033[2J") }
 func moveCursor(r, c int) { fmt.Printf("\033[%d;%dH", r, c) }
 
 // ──────────────────────────
@@ -47,20 +47,20 @@ const reset = "\033[0m"
 // color palette — cohesive colors with directional value shifts (light from upper-left).
 // Nothing is flat-filled.  The palette deliberately avoids the SNES-era flat-pastel look.
 var (
-	colSky       = bg256(117)                  // light blue bg
-	colGround    = bg256(94) + fg256(94)       // brown dirt: solid fill, no texture
-	colGrass     = bg256(34) + fg256(28)       // green grass: bright green bg, darker green fg for texture
-	colPipe      = bg256(34) + fg256(22)       // green pipe
-	colPipeCap   = bg256(28) + fg256(22)       // darker green cap
-	colBirdBody  = fg256(226)                  // yellow
-	colBirdWing  = fg256(214)                  // orange
-	colBirdEye   = fg256(15)                   // white
-	colBirdBeak  = fg256(208)                  // orange-red
-	colScore     = fg256(15)                   // white text
-	colTitle     = fg256(226)                  // yellow
-	colSubtitle  = fg256(15)                   // white
-	colGameOver  = fg256(196)                  // red
-	colMedal     = fg256(220)                  // gold-ish
+	colSky      = bg256(117)            // light blue bg
+	colGround   = bg256(94) + fg256(94) // brown dirt: solid fill, no texture
+	colGrass    = bg256(34) + fg256(28) // green grass: bright green bg, darker green fg for texture
+	colPipe     = bg256(34) + fg256(22) // green pipe
+	colPipeCap  = bg256(28) + fg256(22) // darker green cap
+	colBirdBody = fg256(226)            // yellow
+	colBirdWing = fg256(214)            // orange
+	colBirdEye  = fg256(15)             // white
+	colBirdBeak = fg256(208)            // orange-red
+	colScore    = fg256(15)             // white text
+	colTitle    = fg256(226)            // yellow
+	colSubtitle = fg256(15)             // white
+	colGameOver = fg256(196)            // red
+	colMedal    = fg256(220)            // gold-ish
 
 	// Cloud palette — volumetric shading with directional light from upper-left
 	colCloudBright = fg256(15)  // white — lit top/left edge
@@ -80,7 +80,7 @@ var (
 const (
 	gravity      = 0.18
 	flapStrength = -1.35
-	maxFallSpeed = 2.8  // terminal velocity — prevents punishing freefall
+	maxFallSpeed = 2.8 // terminal velocity — prevents punishing freefall
 	pipeWidth    = 6
 	pipeGap      = 11   // vertical gap between top and bottom pipe
 	pipeSpacing  = 25   // horizontal distance between pipes
@@ -90,8 +90,8 @@ const (
 	renderRate   = 16 * time.Millisecond // ~60 FPS — differential rendering keeps output minimal
 
 	// Death animation timing
-	deathFlashTicks = 4  // ticks of sky-flash (bright white → red → fade)
-	deathAnimTicks  = 20 // total ticks before transitioning to StateDead
+	deathFlashTicks = 4    // ticks of sky-flash (bright white → red → fade)
+	deathAnimTicks  = 20   // total ticks before transitioning to StateDead
 	deathGravity    = 0.25 // heavier gravity during tumble — bird drops faster than gameplay
 )
 
@@ -114,9 +114,9 @@ type SpriteCell struct {
 // BirdSprite defines the visual appearance of a bird across two wing frames.
 // Layout: 2 rows × 3 columns. [row][col] — row 0 is top, col 0 is leftmost.
 type BirdSprite struct {
-	name    string
-	wingUp  [2][3]SpriteCell
-	wingDn  [2][3]SpriteCell
+	name   string
+	wingUp [2][3]SpriteCell
+	wingDn [2][3]SpriteCell
 }
 
 // The four bird skins — randomly chosen per game.
@@ -202,15 +202,15 @@ type Game struct {
 	bestScore     int
 	state         GameState
 	frameCount    int
-	scrollOffset  float64     // smooth sub-pixel scroll offset (accumulated pipeSpeed)
-	renderAlpha   float64     // interpolation fraction for render between physics steps
-	deathTimer    int         // frame counter for death animation (0 at start of dying)
+	scrollOffset  float64      // smooth sub-pixel scroll offset (accumulated pipeSpeed)
+	renderAlpha   float64      // interpolation fraction for render between physics steps
+	deathTimer    int          // frame counter for death animation (0 at start of dying)
 	renderBuf     bytes.Buffer // reusable render output buffer (retains allocation across frames)
-	buf           [][]rune    // character buffer (back buffer — current frame)
-	colBuf        [][]string  // color buffer (back buffer — current frame)
-	prevBuf       [][]rune    // character buffer (front buffer — previous frame)
-	prevColBuf    [][]string  // color buffer (front buffer — previous frame)
-	fullRedraw    bool        // when true, diff render emits every cell (first frame / resize)
+	buf           [][]rune     // character buffer (back buffer — current frame)
+	colBuf        [][]string   // color buffer (back buffer — current frame)
+	prevBuf       [][]rune     // character buffer (front buffer — previous frame)
+	prevColBuf    [][]string   // color buffer (front buffer — previous frame)
+	fullRedraw    bool         // when true, diff render emits every cell (first frame / resize)
 }
 
 // ──────────────────────────
@@ -220,8 +220,12 @@ type Game struct {
 func NewGame() *Game {
 	w, h := getTermSize()
 	// Clamp to reasonable bounds
-	if w > 120 { w = 120 }
-	if h > 40 { h = 40 }
+	if w > 120 {
+		w = 120
+	}
+	if h > 40 {
+		h = 40
+	}
 
 	return newGameWithSize(w, h)
 }
@@ -397,7 +401,7 @@ func (g *Game) update(flap bool) {
 	}
 
 	// Remove off-screen pipes, spawn new ones
-	if len(g.pipes) > 0 && g.pipeScreenX(g.pipes[0]) < -(pipeWidth + 2) {
+	if len(g.pipes) > 0 && g.pipeScreenX(g.pipes[0]) < -(pipeWidth+2) {
 		g.pipes = g.pipes[1:]
 		// spawn a new one beyond the right edge
 		lastX := g.pipes[len(g.pipes)-1].x
@@ -558,7 +562,7 @@ func (g *Game) renderGround() {
 	if playH < g.height {
 		gl := len(grassPattern)
 		for c := 0; c < g.width; c++ {
-			idx := ((c + scrollPx) % gl + gl) % gl // always positive mod
+			idx := ((c+scrollPx)%gl + gl) % gl // always positive mod
 			g.buf[playH][c] = grassPattern[idx]
 			g.colBuf[playH][c] = colGrass
 		}
@@ -1265,13 +1269,13 @@ func main() {
 						g.bestScore = g.score
 					}
 				} else {
-				once.Do(func() { close(quitCh) })
-				showCursor()
-				disableRawMode()
-				clearScreen()
-				moveCursor(1, 1)
-				fmt.Println(farewellMessage(g.bestScore))
-				return
+					once.Do(func() { close(quitCh) })
+					showCursor()
+					disableRawMode()
+					clearScreen()
+					moveCursor(1, 1)
+					fmt.Println(farewellMessage(g.bestScore))
+					return
 				}
 			}
 
